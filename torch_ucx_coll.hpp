@@ -1,11 +1,17 @@
 #pragma once
 
+#include <cuda_runtime.h>
 #include "torch_ucc_sendrecv.hpp"
 
 namespace c10d {
 
 struct torch_ucx_coll_request_t;
 typedef torch_ucx_status_t (*torch_ucx_progress_p)(torch_ucx_coll_request_t *request);
+
+enum torch_ucx_memtype_t {
+    TORCH_UCX_HOST,
+    TORCH_UCX_CUDA
+};
 
 struct torch_ucx_coll_config_t {
     int  chunk;
@@ -17,6 +23,7 @@ struct torch_ucx_coll_comm_t {
     torch_ucx_comm_t        *p2p_comm;
     torch_ucx_coll_config_t config;
     uint32_t                last_tag;
+    cudaStream_t            stream;
 };
 
 struct torch_ucx_coll_request_t {
@@ -24,7 +31,9 @@ struct torch_ucx_coll_request_t {
     uint32_t                tag;
     torch_ucx_status_t      status;
     torch_ucx_progress_p    progress;
+    torch_ucx_memtype_t     src_buf_mtype;
     void                    *src_buffer;
+    torch_ucx_memtype_t     dst_buf_mtype;
     void                    *dst_buffer;
     size_t                  len;
     torch_ucx_request_t     **reqs;

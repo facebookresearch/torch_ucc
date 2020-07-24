@@ -22,16 +22,24 @@ parser.add_argument("--iter", type=int, default=100)
 args = parser.parse_args()
 
 try:
-    comm_size = int(os.environ['OMPI_COMM_WORLD_SIZE'])
-    comm_rank = int(os.environ['OMPI_COMM_WORLD_RANK'])
+    comm_size  = int(os.environ['OMPI_COMM_WORLD_SIZE'])
+    comm_rank  = int(os.environ['OMPI_COMM_WORLD_RANK'])
 except:
-    print('OMPI env variables are not found')
-    sys.exit(1)
+    try:
+        comm_size = int(os.environ['WORLD_SIZE'])
+        comm_rank = int(os.environ['RANK'])
+    except:
+        print('OMPI env variables are not found')
+        sys.exit(1)
 
-os.environ['MASTER_PORT'] = '32167'
-os.environ['MASTER_ADDR'] = 'localhost'
-os.environ['RANK']        = str(comm_rank)
-os.environ['WORLD_SIZE']  = str(comm_size)
+if not os.environ.get('MASTER_PORT', None):
+    os.environ['MASTER_PORT'] = '32167'
+if not os.environ.get('MASTER_ADDR', None):
+    os.environ['MASTER_ADDR'] = 'localhost'
+if not os.environ.get('RANK', None):
+    os.environ['RANK'] = str(comm_rank)
+if not os.environ.get('WORLD_SIZE', None):
+    os.environ['WORLD_SIZE'] = str(comm_size)
 
 if args.use_cuda and not torch.cuda.is_available():
     print("CUDA is not available")
@@ -42,7 +50,7 @@ if args.backend=='nccl' and not args.use_cuda:
     sys.exit(0)
 
 if args.use_cuda:
-    torch.cuda.set_device(comm_rank)
+#    torch.cuda.set_device(comm_rank)
     args.device = torch.device('cuda')
 else:
     args.device = torch.device('cpu')

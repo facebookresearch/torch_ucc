@@ -2,6 +2,14 @@
 
 namespace c10d {
 
+static void torch_ucx_req_init(void* request)
+{
+    torch_ucx_request_t *req = static_cast<torch_ucx_request_t*>(request);
+    req->status = TORCH_UCX_REQUEST_ACTIVE;
+}
+
+static void torch_ucx_req_cleanup(void* request){ }
+
 torch_ucx_status_t torch_ucx_comm_init(torch_ucx_comm_t **ucx_comm,
                                        int size, int rank,
                                        const std::shared_ptr<Store>& store)
@@ -15,6 +23,7 @@ torch_ucx_status_t torch_ucx_comm_init(torch_ucx_comm_t **ucx_comm,
     size_t               local_addr_len;
     std::string          key;
     std::vector<uint8_t> val;
+    ucp_worker_attr_t    worker_attr;
 
     comm = new torch_ucx_comm_t;
     comm->rank = rank;
@@ -29,10 +38,16 @@ torch_ucx_status_t torch_ucx_comm_init(torch_ucx_comm_t **ucx_comm,
     memset(&params, 0, sizeof(ucp_params_t));
     params.field_mask        = UCP_PARAM_FIELD_FEATURES |
                                UCP_PARAM_FIELD_REQUEST_SIZE |
-                               UCP_PARAM_FIELD_ESTIMATED_NUM_EPS;
+                               UCP_PARAM_FIELD_ESTIMATED_NUM_EPS |
+                               UCP_PARAM_FIELD_TAG_SENDER_MASK |
+                               UCP_PARAM_FIELD_REQUEST_INIT |
+                               UCP_PARAM_FIELD_REQUEST_CLEANUP;
     params.request_size      = sizeof(torch_ucx_request_t);
     params.features          = UCP_FEATURE_TAG;
     params.estimated_num_eps = size;
+    params.request_init      = torch_ucx_req_init;
+    params.request_cleanup   = torch_ucx_req_cleanup;
+    params.tag_sender_mask   = TORCH_UCX_RANK_MASK; 
     st = ucp_init(&params, config, &comm->ctx);
     ucp_config_release(config);
     if (st != UCS_OK) {
@@ -48,7 +63,12 @@ torch_ucx_status_t torch_ucx_comm_init(torch_ucx_comm_t **ucx_comm,
         fprintf(stderr, "TorchUCC: failed to init ucp worker\n");
         goto close_ctx;
     }
-// TODO: check that multithread support is provided
+
+    worker_attr.field_mask = UCP_WORKER_ATTR_FIELD_THREAD_MODE;
+    ucp_worker_query(comm->worker, &worker_attr);
+    if (worker_attr.thread_mode != UCS_THREAD_MODE_MULTI) {
+        fprintf(stderr, "TorchUCC: Thread mode multi is not supported");
+    }
 
     st = ucp_worker_get_address(comm->worker, &local_addr, &local_addr_len);
     if (st != UCS_OK) {

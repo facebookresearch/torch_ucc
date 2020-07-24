@@ -402,6 +402,8 @@ std::shared_ptr<ProcessGroup::Work> ProcessGroupUCC::alltoall_base(at::Tensor& o
         auto request = std::make_shared<ProcessGroupUCC::WorkUCXColl>();
 
         if ((outputSplitSizes.size() == 0) || (inputSplitSizes.size() == 0)) {
+            request->req->src_buf_mtype = (inputTensor.is_cuda() ? TORCH_UCX_CUDA: TORCH_UCX_HOST);
+            request->req->dst_buf_mtype = (outputTensor.is_cuda() ? TORCH_UCX_CUDA: TORCH_UCX_HOST);
             request->req->src_buffer = inputTensor.data_ptr();
             request->req->dst_buffer = outputTensor.data_ptr();
             request->req->len = inputTensor.element_size() * inputTensor.numel() / size_;
