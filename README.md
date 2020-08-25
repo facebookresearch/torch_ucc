@@ -1,9 +1,18 @@
-#
-# Copyright (C) Mellanox Technologies Ltd. 2001-2020.  ALL RIGHTS RESERVED.
-#
+# Torch-UCC
+The Torch-UCC plugin is a research prototype that enables collective communication over XCCL for distributed PyTorch applications that load the plugin at application runtime. The XCCL interface is a non-standard API with a corresponding [reference implementation](https://github.com/openucx/xccl) used to guide design decisions for the [UCC project](https://www.ucfconsortium.org/projects/ucc/).  
 
-# torch-ucc
-pytorch ucc plugin
+## Licenses
+The torch-ucc plugin is licensed as:
+* [BSD3](LICENSE)
+
+## Contributor Agreement and Guidelines
+In order to contribute to torch-ucc, please sign up with an appropriate
+[Contributor Agreement](http://www.openucx.org/license/).
+Follow these
+[instructions](https://github.com/openucx/ucx/wiki/Guidance-for-contributors)
+when submitting contributions and changes.
+
+
 ## Build
 Required packages:
 * PyTorch
