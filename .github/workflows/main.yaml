@@ -1,0 +1,36 @@
+name: CI
+
+on: [push, pull_request]
+
+env:
+  OPENUCX_LINK: https://github.com/openucx/ucx.git
+  XCCL_LINK: https://github.com/openucx/xccl.git
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    container:
+      image: pytorch/pytorch:latest
+    steps:
+    - name: Install packages
+      run: |
+        apt-get update
+        apt-get install -y --no-install-recommends build-essential git cmake libtool-bin wget autoconf automake
+    - name: Get UCX
+      run: |
+        git clone ${OPENUCX_LINK} /tmp/ucx
+        cd /tmp/ucx
+        ./autogen.sh
+        ./contrib/configure-release-mt --without-java --disable-numa --prefix=/opt/ucx
+        make -j install
+    - name: Get XCCL
+      run: |
+        git clone ${XCCL_LINK} /tmp/xccl
+        cd /tmp/xccl
+        ./autogen.sh
+        ./configure --with-ucx=/opt/ucx --prefix=/opt/xccl
+        make -j install
+    - uses: actions/checkout@v1
+    - name: Build
+      run: |
+        UCX_HOME=/opt/ucx/ UCC_HOME=/opt/xccl/ python setup.py install 
