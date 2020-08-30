@@ -154,19 +154,9 @@ torch_ucx_status_t torch_ucx_alltoall_start(torch_ucx_coll_comm_t *comm,
         total_reqs = comm->config.chunk;
     }
     request->reqs = new torch_ucx_request_t*[2*(total_reqs+1)];
-    memset(request->reqs, 0, total_reqs * sizeof(torch_ucx_request_t));
-
-
-
     torch_ucx_memcpy((void*)(rbuf+data_size*group_rank), request->dst_buf_mtype,
                      (void*)(sbuf+data_size*group_rank), request->src_buf_mtype,
                      data_size, &comm->stream);
-    // torch_ucx_recv_nb(p2p_comm, (void*)(rbuf+data_size*group_rank), data_size,
-    //                   group_rank, tag, &request->reqs[2*total_reqs],
-    //                   TORCH_UCX_COLL_TAG);
-    // torch_ucx_send_nb(p2p_comm, (void*)(sbuf+data_size*group_rank), data_size,
-    //                   group_rank, tag, &request->reqs[2*total_reqs+1],
-    //                   TORCH_UCX_COLL_TAG);
     for (int step = 0; step < total_reqs; step++) {
         int peer = get_recv_peer(group_rank, group_size, step, reverse);
         torch_ucx_recv_nb(p2p_comm, (void*)(rbuf + peer * data_size), data_size,

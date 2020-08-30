@@ -42,6 +42,7 @@ class ProcessGroupUCC : public ProcessGroup {
         bool isSuccess() const override;
         bool wait() override;
     protected:
+
         torch_ucx_request_t *req;
         torch_ucx_comm_t    *comm;
         friend class ProcessGroupUCC;
@@ -58,6 +59,8 @@ class ProcessGroupUCC : public ProcessGroup {
         bool isSuccess() const override;
         bool wait() override;
     protected:
+        std::vector<at::Tensor>  src;
+        std::vector<at::Tensor>  dst;
         bool                     no_progress;
         torch_ucx_coll_request_t *req;
         friend class ProcessGroupUCC;
@@ -74,11 +77,14 @@ class ProcessGroupUCC : public ProcessGroup {
     bool wait() override;
 
    protected:
-    xccl_coll_req_h         req;
-    xccl_coll_op_args_t     args;
-    std::vector<uint32_t>   scratch;
-    std::vector<at::Tensor> output_data_vec;
-    at::Tensor              flat_tensor;
+    xccl_coll_req_h          req;
+    xccl_coll_op_args_t      args;
+    std::vector<uint32_t>    scratch;
+    std::vector<at::Tensor>  output_data_vec;
+    at::Tensor               flat_tensor;
+    std::vector<at::Tensor>  src;
+    std::vector<at::Tensor>  dst;
+
     friend class ProcessGroupUCC;
   };
 

@@ -172,4 +172,5 @@ void torch_ucx_recv_cmpl_cb(void* request, ucs_status_t status, ucp_tag_recv_inf
   torch_ucx_request_t *req = static_cast<torch_ucx_request_t*>(request);
   req->status = TORCH_UCX_REQUEST_DONE;
 }
+
 }

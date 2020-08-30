@@ -7,8 +7,8 @@
 #pragma once
 
 #include <cuda_runtime.h>
+#include <ATen/ATen.h>
 #include "torch_ucc_sendrecv.hpp"
-
 namespace c10d {
 
 struct torch_ucx_coll_request_t;
@@ -34,6 +34,8 @@ struct torch_ucx_coll_comm_t {
 
 struct torch_ucx_coll_request_t {
     torch_ucx_coll_comm_t   *comm;
+    c10::DeviceIndex        dev_index;
+    c10::DeviceType         dev_type;
     uint32_t                tag;
     torch_ucx_status_t      status;
     torch_ucx_progress_p    progress;

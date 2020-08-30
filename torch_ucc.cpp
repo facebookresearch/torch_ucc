@@ -234,6 +234,10 @@ void ProcessGroupUCC::progress_loop()
     torch_ucx_coll_request_t     *req;
     torch_ucx_status_t           st;
  
+    auto device = c10::Device(c10::DeviceType::CUDA, (c10::DeviceIndex)0);
+    at::cuda::OptionalCUDAGuard  guard(device);
+    cudaSetDevice(0);
+
     while(!stop_progress_loop) {
         if (progress_queue.empty()) {
             queue_produce_cv.wait(lock);
@@ -243,6 +247,7 @@ void ProcessGroupUCC::progress_loop()
         progress_queue.pop_front();
         lock.unlock();
         queue_consume_cv.notify_one();
+        guard.set_index(req->dev_index);
         do {
             st = torch_ucx_coll_test(req);
         } while(st == TORCH_UCX_INPROGRESS);
@@ -411,9 +416,11 @@ std::shared_ptr<ProcessGroup::Work> ProcessGroupUCC::alltoall_base(at::Tensor& o
         if ((outputSplitSizes.size() == 0) || (inputSplitSizes.size() == 0)) {
             request->req->src_buf_mtype = (inputTensor.is_cuda() ? TORCH_UCX_CUDA: TORCH_UCX_HOST);
             request->req->dst_buf_mtype = (outputTensor.is_cuda() ? TORCH_UCX_CUDA: TORCH_UCX_HOST);
-            request->req->src_buffer = inputTensor.data_ptr();
-            request->req->dst_buffer = outputTensor.data_ptr();
-            request->req->len = inputTensor.element_size() * inputTensor.numel() / size_;
+            request->req->src_buffer    = inputTensor.data_ptr();
+            request->req->dst_buffer    = outputTensor.data_ptr();
+            request->req->dev_index     = inputTensor.device().index();
+            request->req->dev_type      = inputTensor.device().type();
+            request->req->len           = inputTensor.element_size() * inputTensor.numel() / size_;
         } else {
             throw std::runtime_error("ProcessGroupUCC: ucx backend doesn't support alltoallv");
         }
