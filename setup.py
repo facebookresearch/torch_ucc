@@ -24,15 +24,17 @@ if cuda_home is None:
     print("Couldn't find CUDA, please set CUDA_HOME env variable")
     sys.exit(1)
 
+ucc_plugin_dir = os.path.dirname(os.path.abspath(__file__))
 
 module = cpp_extension.CppExtension(
     name = "torch_ucc",
-    sources = ["torch_ucc.cpp",
-               "torch_ucc_sendrecv.cpp",
-               "torch_ucx_alltoall.cpp",
-               "torch_ucx_coll.cpp",
-               "torch_xccl.cpp"],
-    include_dirs = ["{}/include/".format(ucx_home),
+    sources = ["src/torch_ucc.cpp",
+               "src/torch_ucc_sendrecv.cpp",
+               "src/torch_ucx_alltoall.cpp",
+               "src/torch_ucx_coll.cpp",
+               "src/torch_xccl.cpp"],
+    include_dirs = ["{}/include/".format(ucc_plugin_dir),
+                    "{}/include/".format(ucx_home),
                     "{}/include/".format(ucc_home),
                     "{}/include/".format(cuda_home)],
     library_dirs = ["{}/lib/".format(ucx_home),
@@ -40,7 +42,6 @@ module = cpp_extension.CppExtension(
                     "{}/lib64/".format(cuda_home)],
     libraries = ["ucp", "uct", "ucm", "ucs", "xccl", "cudart"],
     extra_compile_args=['-g', '-O0']
-
 )
 
 setup(
@@ -49,3 +50,4 @@ setup(
     ext_modules = [module],
     cmdclass={'build_ext': cpp_extension.BuildExtension}
 )
+
