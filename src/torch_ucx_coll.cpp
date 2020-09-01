@@ -40,8 +40,9 @@ torch_ucx_status_t torch_ucx_coll_comm_init(torch_ucx_comm_t *p2p_comm,
     torch_ucx_get_coll_config(&coll_comm->config);
     coll_comm->p2p_comm = p2p_comm;
     coll_comm->last_tag = 0;
+#ifdef USE_CUDA
     coll_comm->stream   = 0;
-
+#endif
     *comm = coll_comm;
     return TORCH_UCX_OK;
 }
@@ -56,9 +57,11 @@ torch_ucx_status_t torch_ucx_coll_test(torch_ucx_coll_request_t *request)
 
 void torch_ucx_coll_comm_close(torch_ucx_coll_comm_t *comm)
 {
+#ifdef USE_CUDA
     if (comm->stream != 0) {
         cudaStreamDestroy(comm->stream);
     }
+#endif
     delete comm;
 }
 

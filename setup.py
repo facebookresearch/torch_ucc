@@ -19,30 +19,43 @@ if ucc_home is None:
     print("Couldn't find UCC install dir, please set UCC_HOME env variable")
     sys.exit(1)
 
-cuda_home = os.environ.get("CUDA_HOME")
-if cuda_home is None:
-    print("Couldn't find CUDA, please set CUDA_HOME env variable")
-    sys.exit(1)
-
 ucc_plugin_dir = os.path.dirname(os.path.abspath(__file__))
 
-module = cpp_extension.CppExtension(
-    name = "torch_ucc",
-    sources = ["src/torch_ucc.cpp",
-               "src/torch_ucc_sendrecv.cpp",
-               "src/torch_ucx_alltoall.cpp",
-               "src/torch_ucx_coll.cpp",
-               "src/torch_xccl.cpp"],
-    include_dirs = ["{}/include/".format(ucc_plugin_dir),
-                    "{}/include/".format(ucx_home),
-                    "{}/include/".format(ucc_home),
-                    "{}/include/".format(cuda_home)],
-    library_dirs = ["{}/lib/".format(ucx_home),
-                    "{}/lib/".format(ucc_home),
-                    "{}/lib64/".format(cuda_home)],
-    libraries = ["ucp", "uct", "ucm", "ucs", "xccl", "cudart"],
-    extra_compile_args=['-g', '-O0']
-)
+with_cuda = os.environ.get("WITH_CUDA")
+if with_cuda is None or with_cuda == "no":
+    print("CUDA support is disabled")
+    module = cpp_extension.CppExtension(
+        name = "torch_ucc",
+        sources = ["src/torch_ucc.cpp",
+                   "src/torch_ucc_sendrecv.cpp",
+                   "src/torch_ucx_alltoall.cpp",
+                   "src/torch_ucx_coll.cpp",
+                   "src/torch_xccl.cpp"],
+        include_dirs = ["{}/include/".format(ucc_plugin_dir),
+                        "{}/include/".format(ucx_home),
+                        "{}/include/".format(ucc_home)],
+        library_dirs = ["{}/lib/".format(ucx_home),
+                        "{}/lib/".format(ucc_home)],
+        libraries = ["ucp", "uct", "ucm", "ucs", "xccl"],
+        extra_compile_args=['-g', '-O0']
+    )
+else:
+    print("CUDA support is enabled")
+    module = cpp_extension.CUDAExtension(
+        name = "torch_ucc",
+        sources = ["src/torch_ucc.cpp",
+                   "src/torch_ucc_sendrecv.cpp",
+                   "src/torch_ucx_alltoall.cpp",
+                   "src/torch_ucx_coll.cpp",
+                   "src/torch_xccl.cpp"],
+        include_dirs = ["{}/include/".format(ucc_plugin_dir),
+                        "{}/include/".format(ucx_home),
+                        "{}/include/".format(ucc_home)],
+        library_dirs = ["{}/lib/".format(ucx_home),
+                        "{}/lib/".format(ucc_home)],
+        libraries = ["ucp", "uct", "ucm", "ucs", "xccl"],
+        extra_compile_args=['-g', '-O0', '-DUSE_CUDA']
+    )
 
 setup(
     name = "torch-ucc",

@@ -12,9 +12,6 @@
 
 #include <ucp/api/ucp.h>
 #include <c10d/Store.hpp>
-#include <c10/cuda/CUDAGuard.h>
-#include <cuda.h>
-
 
 namespace c10d {
 
