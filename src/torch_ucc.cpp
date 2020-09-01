@@ -13,6 +13,11 @@
 #include <iostream>
 #include <stdio.h>
 
+#ifdef USE_CUDA
+#include <c10/cuda/CUDAGuard.h>
+#include <cuda.h>
+#endif
+
 namespace c10d {
 
 std::map<ReduceOp, xccl_op_t> xccl_op_map = {
@@ -234,9 +239,11 @@ void ProcessGroupUCC::progress_loop()
     torch_ucx_coll_request_t     *req;
     torch_ucx_status_t           st;
  
+ #ifdef USE_CUDA
     auto device = c10::Device(c10::DeviceType::CUDA, (c10::DeviceIndex)0);
     at::cuda::OptionalCUDAGuard  guard(device);
     cudaSetDevice(0);
+#endif
 
     while(!stop_progress_loop) {
         if (progress_queue.empty()) {
@@ -247,7 +254,9 @@ void ProcessGroupUCC::progress_loop()
         progress_queue.pop_front();
         lock.unlock();
         queue_consume_cv.notify_one();
+#ifdef USE_CUDA
         guard.set_index(req->dev_index);
+#endif
         do {
             st = torch_ucx_coll_test(req);
         } while(st == TORCH_UCX_INPROGRESS);

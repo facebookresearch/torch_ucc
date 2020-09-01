@@ -30,17 +30,17 @@ static inline int get_send_peer(int group_rank, int group_size,
 
 static inline void torch_ucx_memcpy(void *dst, torch_ucx_memtype_t dst_mtype,
                                     void *src, torch_ucx_memtype_t src_mtype,
-                                    size_t size, cudaStream_t *stream)
+                                    size_t size, torch_ucx_coll_comm_t *comm)
 {
-    cudaMemcpyKind mk;
-
     if ((src_mtype == TORCH_UCX_HOST) && (dst_mtype == TORCH_UCX_HOST)) {
         memcpy(dst, src, size);
         return;
     }
 
-    if (*stream == 0) {
-        cudaStreamCreateWithFlags(stream, cudaStreamNonBlocking);
+#ifdef USE_CUDA
+    cudaMemcpyKind mk;
+    if (comm->stream == 0) {
+        cudaStreamCreateWithFlags(&comm->stream, cudaStreamNonBlocking);
     }
     if ((src_mtype == TORCH_UCX_CUDA) && (dst_mtype == TORCH_UCX_CUDA)) {
         mk = cudaMemcpyDeviceToDevice;
@@ -49,17 +49,21 @@ static inline void torch_ucx_memcpy(void *dst, torch_ucx_memtype_t dst_mtype,
     } else if ((src_mtype == TORCH_UCX_HOST) && (dst_mtype == TORCH_UCX_CUDA)) {
         mk = cudaMemcpyHostToDevice;
     }
-
-    cudaMemcpyAsync(dst, src, size, mk, *stream);
+    cudaMemcpyAsync(dst, src, size, mk, comm->stream);
+#else
+    fprintf(stderr, "TorchUCC: CUDA buffers are used but plugin CUDA support is disabled");
+#endif 
 }
 
 static inline void sync_stream(torch_ucx_memtype_t dst_mtype,
                                torch_ucx_memtype_t src_mtype,
-                               cudaStream_t stream)
+                               torch_ucx_coll_comm_t *comm)
 {
+#ifdef USE_CUDA
     if ((src_mtype == TORCH_UCX_CUDA) || (dst_mtype == TORCH_UCX_CUDA)) {
-        cudaStreamSynchronize(stream);
+        cudaStreamSynchronize(comm->stream);
     }
+#endif
 }
 
 torch_ucx_status_t torch_ucx_alltoall_progress(torch_ucx_coll_request_t *request)
@@ -127,7 +131,7 @@ torch_ucx_status_t torch_ucx_alltoall_progress(torch_ucx_coll_request_t *request
     if (st == TORCH_UCX_INPROGRESS) {
         return TORCH_UCX_OK;
     }
-    sync_stream(request->dst_buf_mtype, request->src_buf_mtype, request->comm->stream);
+    sync_stream(request->dst_buf_mtype, request->src_buf_mtype, request->comm);
     delete[] request->reqs;
     request->status = TORCH_UCX_OK;
 
@@ -156,7 +160,7 @@ torch_ucx_status_t torch_ucx_alltoall_start(torch_ucx_coll_comm_t *comm,
     request->reqs = new torch_ucx_request_t*[2*(total_reqs+1)];
     torch_ucx_memcpy((void*)(rbuf+data_size*group_rank), request->dst_buf_mtype,
                      (void*)(sbuf+data_size*group_rank), request->src_buf_mtype,
-                     data_size, &comm->stream);
+                     data_size, comm);
     for (int step = 0; step < total_reqs; step++) {
         int peer = get_recv_peer(group_rank, group_size, step, reverse);
         torch_ucx_recv_nb(p2p_comm, (void*)(rbuf + peer * data_size), data_size,

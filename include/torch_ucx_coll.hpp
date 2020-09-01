@@ -6,7 +6,10 @@
 
 #pragma once
 
+#ifdef USE_CUDA
 #include <cuda_runtime.h>
+#endif
+
 #include <ATen/ATen.h>
 #include "torch_ucc_sendrecv.hpp"
 namespace c10d {
@@ -29,7 +32,9 @@ struct torch_ucx_coll_comm_t {
     torch_ucx_comm_t        *p2p_comm;
     torch_ucx_coll_config_t config;
     uint32_t                last_tag;
+#ifdef USE_CUDA
     cudaStream_t            stream;
+#endif 
 };
 
 struct torch_ucx_coll_request_t {
