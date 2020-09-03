@@ -5,7 +5,8 @@
  * */
 
 #include <cstdlib>
-#include "torch_ucx_coll.hpp"
+#include <torch_ucx_coll.hpp>
+#include <torch_ucc_ops.hpp>
 
 namespace c10d {
 
@@ -31,8 +32,8 @@ static void torch_ucx_get_coll_config(torch_ucx_coll_config_t *config)
     }
 }
 
-torch_ucx_status_t torch_ucx_coll_comm_init(torch_ucx_comm_t *p2p_comm,
-                                            torch_ucx_coll_comm_t **comm)
+torch_ucc_status_t torch_ucx_coll_comm_init(torch_ucx_comm_t *p2p_comm,
+                                            void **comm)
 {
     torch_ucx_coll_comm_t *coll_comm;
 
@@ -44,25 +45,66 @@ torch_ucx_status_t torch_ucx_coll_comm_init(torch_ucx_comm_t *p2p_comm,
     coll_comm->stream   = 0;
 #endif
     *comm = coll_comm;
-    return TORCH_UCX_OK;
+    return TORCH_UCC_OK;
 }
 
-torch_ucx_status_t torch_ucx_coll_test(torch_ucx_coll_request_t *request)
+torch_ucc_status_t torch_ucx_coll_test(torch_ucc_coll_request_t *request)
 {
-    if (request->status == TORCH_UCX_INPROGRESS) {
-        request->progress(request);
-    }
-    return request->status;
+    torch_ucx_coll_request_t *req = (torch_ucx_coll_request_t*)request;
+
+    return req->status;
 }
 
-void torch_ucx_coll_comm_close(torch_ucx_coll_comm_t *comm)
+torch_ucc_status_t torch_ucx_coll_comm_close(void *comm)
 {
+    torch_ucx_coll_comm_t *coll_comm;
+
+    coll_comm = (torch_ucx_coll_comm_t*)(comm);
 #ifdef USE_CUDA
-    if (comm->stream != 0) {
-        cudaStreamDestroy(comm->stream);
+    if (coll_comm->stream != 0) {
+        cudaStreamDestroy(coll_comm->stream);
     }
 #endif
-    delete comm;
+    delete coll_comm;
+
+    return TORCH_UCC_OK;
 }
+
+torch_ucc_status_t torch_ucx_coll_progress(torch_ucc_coll_request_t *request)
+{
+    torch_ucx_coll_request_t *req = (torch_ucx_coll_request_t*)request;
+
+    return req->progress(req);
+}
+
+torch_ucc_status_t torch_ucx_coll_free(torch_ucc_coll_request_t *request)
+{
+    torch_ucx_coll_request_t *req = (torch_ucx_coll_request_t*)request;
+
+    delete req;
+    return TORCH_UCC_OK;
+}
+
+torch_ucc_status_t torch_ucx_coll_allreduce(void *coll_comm,
+                                            void *send_buffer, torch_ucx_memtype_t send_mtype,
+                                            void *recv_buffer, torch_ucx_memtype_t recv_mtype,
+                                            int count, int element_size, at::ScalarType data_type,
+                                            ReduceOp op, torch_ucc_coll_request_t **request)
+{
+    fprintf(stderr, "ProcessGroupUCC: UCX backend doesn't support allreduce\n");
+    return TORCH_UCC_ERROR;
+}
+
+
+
+torch_ucc_coll_ops_t ucx_coll_ops {
+    torch_ucx_coll_comm_init,
+    torch_ucx_alltoall,
+    torch_ucx_coll_allreduce,
+    torch_ucx_coll_progress,
+    torch_ucx_coll_test,
+    torch_ucx_coll_free,
+    torch_ucx_coll_comm_close
+};
 
 }
