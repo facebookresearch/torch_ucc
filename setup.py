@@ -6,6 +6,11 @@ import os
 import sys
 from setuptools import setup
 from torch.utils import cpp_extension
+from torch import __version__ as torch_version
+
+ver_major, ver_minor = torch_version.split(".")[:2]
+ver_major = '-DTORCH_VER_MAJOR='+ver_major
+ver_minor = '-DTORCH_VER_MINOR='+ver_minor
 
 ucx_home = os.environ.get("UCX_HOME")
 if ucx_home is None:
@@ -37,7 +42,7 @@ if with_cuda is None or with_cuda == "no":
         library_dirs = ["{}/lib/".format(ucx_home),
                         "{}/lib/".format(ucc_home)],
         libraries = ["ucp", "uct", "ucm", "ucs", "xccl"],
-        extra_compile_args=['-g', '-O0']
+        extra_compile_args=['-g', '-O0', ver_major, ver_minor]
     )
 else:
     print("CUDA support is enabled")
@@ -54,7 +59,7 @@ else:
         library_dirs = ["{}/lib/".format(ucx_home),
                         "{}/lib/".format(ucc_home)],
         libraries = ["ucp", "uct", "ucm", "ucs", "xccl"],
-        extra_compile_args=['-g', '-O0', '-DUSE_CUDA']
+        extra_compile_args=['-g', '-O0', '-DUSE_CUDA', ver_major, ver_minor]
     )
 
 setup(

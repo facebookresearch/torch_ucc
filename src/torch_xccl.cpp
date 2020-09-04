@@ -4,7 +4,8 @@
  * * See file LICENSE for terms.
  * */
 
-#include "torch_xccl.hpp"
+#include <torch_xccl.hpp>
+#include <map>
 
 namespace c10d {
 
@@ -98,8 +99,8 @@ static int oob_allgather(void *sbuf, void *rbuf, size_t msglen,
   return oob_allgather_test(oob_req);
 }
 
-torch_ucx_status_t torch_xccl_comm_init(torch_ucx_comm_t *p2p_comm,
-                                        torch_xccl_comm_t **comm)
+torch_ucc_status_t torch_xccl_comm_init(torch_ucx_comm_t *p2p_comm,
+                                        void **comm)
 {
     torch_xccl_comm_t *xccl_comm;
     xccl_lib_params_t lib_params;
@@ -185,7 +186,7 @@ torch_ucx_status_t torch_xccl_comm_init(torch_ucx_comm_t *p2p_comm,
     while (XCCL_INPROGRESS == xccl_team_create_test(xccl_comm->xccl_team));
     *comm = xccl_comm;
 
-    return TORCH_UCX_OK;
+    return TORCH_UCC_OK;
 free_context:
     xccl_context_destroy(xccl_comm->xccl_ctx);
 free_lib:
@@ -193,14 +194,144 @@ free_lib:
 free_comm:
     delete xccl_comm;
     *comm = NULL;
-    return TORCH_UCX_ERROR;
+    return TORCH_UCC_ERROR;
 }
 
-void torch_xccl_comm_close(torch_xccl_comm_t *comm)
+struct torch_xccl_request_t {
+    torch_ucc_coll_request_t super;
+    xccl_coll_req_h          request;
+    torch_ucc_status_t       status;
+};
+
+torch_ucc_status_t torch_xccl_comm_close(void *comm)
 {
-    xccl_team_destroy(comm->xccl_team);
-    xccl_context_destroy(comm->xccl_ctx);
-    xccl_lib_cleanup(comm->xccl_lib);
+    torch_xccl_comm_t *xccl_comm = (torch_xccl_comm_t*)comm;
+
+    xccl_team_destroy(xccl_comm->xccl_team);
+    xccl_context_destroy(xccl_comm->xccl_ctx);
+    xccl_lib_cleanup(xccl_comm->xccl_lib);
+    delete xccl_comm;
+
+    return TORCH_UCC_OK;
 }
+
+torch_ucc_status_t torch_xccl_alltoall(void *coll_comm,
+                                       void *send_buffer, torch_ucx_memtype_t send_mtype,
+                                       void *recv_buffer, torch_ucx_memtype_t recv_mtype,
+                                       size_t len, torch_ucc_coll_request_t **request)
+{
+    torch_xccl_comm_t    *xccl_comm = (torch_xccl_comm_t*)coll_comm;
+    xccl_coll_req_h      xccl_req;
+    xccl_coll_op_args_t  coll_args;
+    torch_xccl_request_t *coll_req;
+
+    coll_req = new torch_xccl_request_t;
+    coll_req->status = TORCH_UCC_INPROGRESS;
+
+    coll_args.coll_type              = XCCL_ALLTOALL;
+    coll_args.buffer_info.src_buffer = send_buffer;
+    coll_args.buffer_info.dst_buffer = recv_buffer;
+    coll_args.buffer_info.len        = len;
+    coll_args.alg.set_by_user        = 0;
+
+    xccl_collective_init(&coll_args, &xccl_req, xccl_comm->xccl_team);
+    xccl_collective_post(xccl_req);
+
+    coll_req->request = xccl_req;
+    *request = (torch_ucc_coll_request_t*)coll_req;
+
+    return TORCH_UCC_OK;
+}
+
+std::map<ReduceOp, xccl_op_t> xccl_op_map = {
+    {ReduceOp::MIN,     XCCL_OP_MIN},
+    {ReduceOp::MAX,     XCCL_OP_MAX},
+    {ReduceOp::SUM,     XCCL_OP_SUM},
+    {ReduceOp::PRODUCT, XCCL_OP_PROD},
+};
+
+std::map<at::ScalarType, xccl_dt_t> xccl_type_map = {
+    {at::kByte,   XCCL_DT_UINT8},
+    {at::kChar,   XCCL_DT_INT8},
+    {at::kHalf,   XCCL_DT_FLOAT16},
+    {at::kDouble, XCCL_DT_FLOAT64},
+    {at::kFloat,  XCCL_DT_FLOAT32},
+    {at::kInt,    XCCL_DT_INT32},
+    {at::kLong,   XCCL_DT_INT64},
+};
+
+torch_ucc_status_t torch_xccl_allreduce(void *coll_comm,
+                                        void *send_buffer, torch_ucx_memtype_t send_mtype,
+                                        void *recv_buffer, torch_ucx_memtype_t recv_mtype,
+                                        int count, int element_size, at::ScalarType data_type,
+                                        ReduceOp op, torch_ucc_coll_request_t **request)
+{
+    torch_xccl_comm_t    *xccl_comm = (torch_xccl_comm_t*)coll_comm;
+    xccl_coll_req_h      xccl_req;
+    xccl_coll_op_args_t  coll_args;
+    torch_xccl_request_t *coll_req;
+
+    coll_req = new torch_xccl_request_t;
+    coll_req->status = TORCH_UCC_INPROGRESS;
+
+    coll_args.coll_type              = XCCL_ALLREDUCE;
+    coll_args.buffer_info.src_buffer = send_buffer;
+    coll_args.buffer_info.dst_buffer = recv_buffer;
+    coll_args.buffer_info.len        = count * element_size;
+    coll_args.reduce_info.dt         = xccl_type_map.at(data_type);
+    coll_args.reduce_info.op         = xccl_op_map.at(op);
+    coll_args.reduce_info.count      = count;
+    coll_args.alg.set_by_user        = 0;
+
+    xccl_collective_init(&coll_args, &xccl_req, xccl_comm->xccl_team);
+    xccl_collective_post(xccl_req);
+
+    coll_req->request = xccl_req;
+    *request = (torch_ucc_coll_request_t*)coll_req;
+
+    return TORCH_UCC_OK;
+}
+
+torch_ucc_status_t torch_xccl_progress(torch_ucc_coll_request_t *request)
+{
+    torch_xccl_request_t *req = (torch_xccl_request_t*)request;
+    xccl_status_t st;
+
+    if (req->status == TORCH_UCC_INPROGRESS) {
+        st = xccl_collective_test(req->request);
+        if (st != XCCL_INPROGRESS) {
+            req->status = TORCH_UCC_OK;
+            xccl_collective_finalize(req->request);
+        }
+    }
+
+    return TORCH_UCC_OK;
+}
+
+torch_ucc_status_t torch_xccl_test(torch_ucc_coll_request_t *request)
+{
+    torch_xccl_request_t *req = (torch_xccl_request_t*)request;
+
+    return req->status;
+}
+
+
+torch_ucc_status_t torch_xccl_free(torch_ucc_coll_request_t *request)
+{
+    torch_xccl_request_t *req = (torch_xccl_request_t*)request;
+
+    delete req;
+    return TORCH_UCC_OK;
+}
+
+torch_ucc_coll_ops_t xccl_coll_ops {
+    torch_xccl_comm_init,
+    torch_xccl_alltoall,
+    torch_xccl_allreduce,
+    torch_xccl_progress,
+    torch_xccl_test,
+    torch_xccl_free,
+    torch_xccl_comm_close
+};
 
 }

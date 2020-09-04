@@ -22,12 +22,8 @@
 #include <c10d/Types.hpp>
 #include <c10d/Utils.hpp>
 
-#include <ucp/api/ucp.h>
-#include <api/xccl.h>
-
-#include "torch_ucc_sendrecv.hpp"
-#include "torch_ucx_coll.hpp"
-#include "torch_xccl.hpp"
+#include <torch_ucc_sendrecv.hpp>
+#include <torch_ucc_ops.hpp>
 
 namespace c10d {
 
@@ -40,58 +36,47 @@ class ProcessGroupUCC : public ProcessGroup {
         virtual ~WorkUCX();
         bool isCompleted() override;
         bool isSuccess() const override;
+#if TORCH_VER_MAJOR == 1 && TORCH_VER_MINOR <= 6
         bool wait() override;
+#else
+        bool wait(std::chrono::milliseconds timeout = kUnsetTimeout) override;
+#endif
     protected:
-
+        bool wait_impl(std::chrono::milliseconds timeout);
         torch_ucx_request_t *req;
         torch_ucx_comm_t    *comm;
         friend class ProcessGroupUCC;
     };
 
-    class WorkUCXColl: public ProcessGroup::Work {
+    class WorkColl: public ProcessGroup::Work {
     public:
-        WorkUCXColl() {
-            req = new torch_ucx_coll_request_t;
+        WorkColl(torch_ucc_coll_ops_t ops) {
+            coll_ops    = ops;
             no_progress = false;
         }
-        virtual ~WorkUCXColl();
+        virtual ~WorkColl();
         bool isCompleted() override;
         bool isSuccess() const override;
+#if TORCH_VER_MAJOR == 1 && TORCH_VER_MINOR <= 6
         bool wait() override;
+#else
+        bool wait(std::chrono::milliseconds timeout = kUnsetTimeout) override;
+#endif
     protected:
+        bool wait_impl(std::chrono::milliseconds timeout);
+
+        torch_ucc_coll_ops_t     coll_ops;
         std::vector<at::Tensor>  src;
         std::vector<at::Tensor>  dst;
         bool                     no_progress;
-        torch_ucx_coll_request_t *req;
+        torch_ucc_coll_request_t *coll_req;
         friend class ProcessGroupUCC;
     };
-
-  class WorkUCC : public ProcessGroup::Work {
-   public:
-    WorkUCC(xccl_coll_req_h request): req(request){}
-    WorkUCC(){}
-
-    virtual ~WorkUCC();
-    bool isCompleted() override;
-    bool isSuccess() const override;
-    bool wait() override;
-
-   protected:
-    xccl_coll_req_h          req;
-    xccl_coll_op_args_t      args;
-    std::vector<uint32_t>    scratch;
-    std::vector<at::Tensor>  output_data_vec;
-    at::Tensor               flat_tensor;
-    std::vector<at::Tensor>  src;
-    std::vector<at::Tensor>  dst;
-
-    friend class ProcessGroupUCC;
-  };
-
 
   explicit ProcessGroupUCC(const std::shared_ptr<Store>& store,
                            int rank = -1,
                            int size = -1);
+
   virtual ~ProcessGroupUCC();
 
   std::shared_ptr<ProcessGroup::Work> broadcast(std::vector<at::Tensor>& data,
@@ -164,29 +149,24 @@ class ProcessGroupUCC : public ProcessGroup {
 protected:
     std::shared_ptr<Store>                store_;
     torch_ucx_comm_t                      *ucx_comm;
-    torch_ucx_coll_comm_t                 *ucx_coll_comm;
-    torch_xccl_comm_t                     *xccl_comm;
+    void                                  *coll_comm;
+    torch_ucc_coll_ops_t                  coll_ops;
     std::mutex                            pg_mutex;
     std::thread                           progress_thread;
     bool                                  stop_progress_loop;
-    std::deque<torch_ucx_coll_request_t*> progress_queue;
+    std::deque<torch_ucc_coll_request_t*> progress_queue;
     std::condition_variable               queue_produce_cv;
     std::condition_variable               queue_consume_cv;
 
     void progress_loop();
-    void enqueue_request(torch_ucx_coll_request_t* req);
+    void enqueue_request(torch_ucc_coll_request_t *req);
 private:
     struct ucc_config {
         bool enable_progress_thread;
-        bool enable_xccl;
-        bool enable_ucx;
     } config;
   
-    void                 read_config();
-    void                 check_tensor(const std::vector<at::Tensor>& tensors);
-    xccl_coll_req_h      launch_xccl_collective(xccl_collective_type_t coll,
-                                           const std::vector<at::Tensor>& tensors,
-                                           int root, xccl_op_t op);
+    void read_config();
+    void check_tensor(const std::vector<at::Tensor>& tensors);
 };
 
 } // namespace c10d
