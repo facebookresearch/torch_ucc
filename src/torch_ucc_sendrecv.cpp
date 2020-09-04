@@ -141,20 +141,15 @@ void torch_ucx_comm_close(torch_ucx_comm_t *comm,
         }
     }
 
-    auto key = "close" + std::to_string(comm->rank);
-    auto val = std::vector<uint8_t>{0xFF};
-    store->set(key, val);
-    std::vector<std::string> peer_keys(comm->size);
+    auto key_ep_closed = "epclosed";
+    auto num_closed_ep = store->add(key_ep_closed, 1);
 
-    for (int i = 0; i < comm->size; i++) {
-        peer_keys[i] = "close" + std::to_string(i);
+    std::vector<std::string> key_finished{"finished"};
+    if (num_closed_ep == comm->size) {
+        store->add(key_finished[0], 1);
+    } else {
+        store->wait(key_finished);
     }
-    try {
-        store->wait(peer_keys, std::chrono::milliseconds(100));
-    }
-    catch(...) {
-    }
-
     delete[] comm->eps;
     ucp_worker_destroy(comm->worker);
     ucp_cleanup(comm->ctx);
