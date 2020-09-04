@@ -51,8 +51,9 @@ class ProcessGroupUCC : public ProcessGroup {
     class WorkColl: public ProcessGroup::Work {
     public:
         WorkColl(torch_ucc_coll_ops_t ops) {
-            coll_ops    = ops;
-            no_progress = false;
+            coll_ops            = ops;
+            no_progress         = false;
+            alltoall_len_offset = NULL;
         }
         virtual ~WorkColl();
         bool isCompleted() override;
@@ -64,12 +65,14 @@ class ProcessGroupUCC : public ProcessGroup {
 #endif
     protected:
         bool wait_impl(std::chrono::milliseconds timeout);
-
+        
         torch_ucc_coll_ops_t     coll_ops;
         std::vector<at::Tensor>  src;
         std::vector<at::Tensor>  dst;
+        uint32_t                 *alltoall_len_offset;
         bool                     no_progress;
         torch_ucc_coll_request_t *coll_req;
+
         friend class ProcessGroupUCC;
     };
 

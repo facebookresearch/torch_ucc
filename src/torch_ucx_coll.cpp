@@ -100,6 +100,7 @@ torch_ucc_status_t torch_ucx_coll_allreduce(void *coll_comm,
 torch_ucc_coll_ops_t ucx_coll_ops {
     torch_ucx_coll_comm_init,
     torch_ucx_alltoall,
+    torch_ucx_alltoallv,
     torch_ucx_coll_allreduce,
     torch_ucx_coll_progress,
     torch_ucx_coll_test,

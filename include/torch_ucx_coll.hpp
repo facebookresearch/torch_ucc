@@ -38,8 +38,6 @@ struct torch_ucx_coll_comm_t {
 struct torch_ucx_coll_request_t {
     torch_ucc_coll_request_t super;
     torch_ucx_coll_comm_t    *comm;
-    c10::DeviceIndex         dev_index;
-    c10::DeviceType          dev_type;
     uint32_t                 tag;
     torch_ucx_progress_p     progress;
     torch_ucc_status_t       status;
@@ -48,10 +46,12 @@ struct torch_ucx_coll_request_t {
     torch_ucx_memtype_t      dst_buf_mtype;
     void                     *dst_buffer;
     size_t                   len;
-    std::vector<int>         send_lengths;
-    std::vector<int>         send_offsets;
-    std::vector<int>         recv_lengths;
-    std::vector<int>         recv_offsets;
+    at::ScalarType           send_data_type;
+    uint32_t                 *send_lengths;
+    uint32_t                 *send_offsets;
+    at::ScalarType           recv_data_type;
+    uint32_t                 *recv_lengths;
+    uint32_t                 *recv_offsets;
     torch_ucx_request_t      **reqs;
     int                      n_sreqs;
     int                      n_rreqs;
@@ -67,11 +67,14 @@ torch_ucc_status_t torch_ucx_alltoall(void *coll_comm,
                                       void *recv_buffer, torch_ucx_memtype_t recv_mtype,
                                       size_t len, torch_ucc_coll_request_t **request);
 
-torch_ucx_status_t torch_ucx_alltoall_start(torch_ucx_coll_comm_t *comm,
-                                            torch_ucx_coll_request_t *request);
-
-torch_ucx_status_t torch_ucx_alltoallv_start(torch_ucx_coll_comm_t *comm,
-                                             torch_ucx_coll_request_t *request);
+torch_ucc_status_t torch_ucx_alltoallv(void *coll_comm,
+                                       void *send_buffer, torch_ucx_memtype_t send_mtype,
+                                       at::ScalarType send_data_type,
+                                       uint32_t *send_lengths, uint32_t *send_offsets,
+                                       void *recv_buffer, torch_ucx_memtype_t recv_mtype,
+                                       at::ScalarType recv_data_type,
+                                       uint32_t *recv_lengths, uint32_t *recv_offsets,
+                                       torch_ucc_coll_request_t **request);
 
 torch_ucc_status_t torch_ucx_coll_comm_close(void *comm);
 

@@ -28,6 +28,36 @@ void ProcessGroupUCC::check_tensor(const std::vector<at::Tensor>& tensors) {
   //TODO: check cuda case
 }
 
+static torch_ucc_status_t compute_lengths_offsets(int group_size,
+                                                  const std::vector<int64_t>& split_sizes,
+                                                  const at::Tensor& tensor,
+                                                  uint32_t *lengths,
+                                                  uint32_t *offsets)
+{
+    bool   equal_splits = false;
+    size_t dim0_size    = tensor.size(0);
+    size_t row_size     = (dim0_size ? tensor.numel() / dim0_size : 1);
+    size_t split_size   = 0;
+    size_t offset       = 0;
+
+    if (split_sizes.size() == 0) {
+        equal_splits = true;
+        split_size = tensor.size(0) / group_size;
+    }
+
+    for (int i = 0; i < group_size; i++) {
+        size_t length = row_size * (equal_splits ? split_size : split_sizes[i]);
+        if ((length > INT_MAX) || (offset > INT_MAX)) {
+            return TORCH_UCC_ERROR;
+        }
+       lengths[i] = length;
+       offsets[i] = offset;
+       offset += length;
+    }
+
+    return TORCH_UCC_OK;
+}
+
 ProcessGroupUCC::WorkUCX::~WorkUCX()
 {
     if (req != NULL) {
@@ -71,6 +101,10 @@ ProcessGroupUCC::WorkColl::~WorkColl()
 {
     if (coll_req != NULL) {
         coll_ops.coll_finalize(coll_req);
+    }
+
+    if (alltoall_len_offset != NULL) {
+        delete[] alltoall_len_offset;
     }
 }
 
@@ -295,33 +329,6 @@ std::shared_ptr<ProcessGroup::Work> ProcessGroupUCC::reduce_scatter(std::vector<
   throw std::runtime_error("ProcessGroupUCC does not support reduce_scatter");
 }
 
-
-int64_t computeLengthsAndOffsets(int group_size,
-                                 const std::vector<int64_t>& split_sizes,
-                                 const at::Tensor& tensor,
-                                 uint32_t* lengths,
-                                 uint32_t* offsets)
-{
-  bool equal_splits = false;
-  int64_t dim0_size = tensor.size(0);
-  int64_t row_size = (dim0_size ? tensor.numel() / dim0_size : 1);
-  int64_t split_size = 0;
-  int64_t offset = 0;
-
-  if (split_sizes.size() == 0) {
-    equal_splits = true;
-    split_size = tensor.size(0) / group_size;
-  }
-
-  for (int i = 0; i < group_size; i++) {
-    int64_t length = row_size * (equal_splits ? split_size : split_sizes[i]);
-    lengths[i] = length;
-    offsets[i] = offset;
-    offset += length;
-  }
-  return offset;
-}
-
 std::shared_ptr<ProcessGroup::Work> ProcessGroupUCC::alltoall_base(at::Tensor& outputTensor,
                                                                    at::Tensor& inputTensor,
                                                                    std::vector<int64_t>& outputSplitSizes,
@@ -330,8 +337,9 @@ std::shared_ptr<ProcessGroup::Work> ProcessGroupUCC::alltoall_base(at::Tensor& o
 {
     auto request = std::make_shared<ProcessGroupUCC::WorkColl>(coll_ops);
     torch_ucc_coll_request_t *coll_req;
+    torch_ucc_status_t       st;
 
-    if ((outputSplitSizes.size() == 0) || (inputSplitSizes.size() == 0)) {
+    if ((outputSplitSizes.size() == 0) && (inputSplitSizes.size() == 0)) {
         coll_ops.alltoall(coll_comm,
                           inputTensor.data_ptr(),
                           (inputTensor.is_cuda() ? TORCH_UCX_CUDA: TORCH_UCX_HOST),
@@ -339,16 +347,38 @@ std::shared_ptr<ProcessGroup::Work> ProcessGroupUCC::alltoall_base(at::Tensor& o
                           (outputTensor.is_cuda() ? TORCH_UCX_CUDA: TORCH_UCX_HOST),
                           inputTensor.element_size() * inputTensor.numel() / size_,
                           &coll_req);
-        request->coll_req = coll_req;
     } else {
-        // req->send_lengths.resize(size_); req->send_offsets.resize(size_);
-        // req->recv_lengths.resize(size_); req->recv_offsets.resize(size_);
-        // computeLengthsAndOffsets(
-        //     inputSplitSizes, inputTensor, &req->send_lengths, &req->send_offsets);
-        // computeLengthsAndOffsets(
-        //     outputSplitSizes, outputTensor, &req->recv_lengths, &req->recv_offsets);
-        // torch_ucx_alltoallv_start(ucx_coll_comm, request->req);
+        request->alltoall_len_offset = new uint32_t[4*size_];
+        uint32_t *send_lengths = request->alltoall_len_offset;
+        uint32_t *recv_lengths = (uint32_t*)((ptrdiff_t)send_lengths + 1*size_*sizeof(uint32_t));
+        uint32_t *send_offsets = (uint32_t*)((ptrdiff_t)send_lengths + 2*size_*sizeof(uint32_t));
+        uint32_t *recv_offsets = (uint32_t*)((ptrdiff_t)send_lengths + 3*size_*sizeof(uint32_t));
+
+        st = compute_lengths_offsets(size_, outputSplitSizes, outputTensor,
+                                     recv_lengths, recv_offsets);
+        if (st != TORCH_UCC_OK) {
+            throw std::runtime_error("ProcessGroupUCC: alltoallv failed");
+        }
+
+        st = compute_lengths_offsets(size_, inputSplitSizes, inputTensor,
+                                     send_lengths, send_offsets);
+        if (st != TORCH_UCC_OK) {
+            throw std::runtime_error("ProcessGroupUCC: alltoallv failed");
+        }
+
+        coll_ops.alltoallv(coll_comm,
+                           inputTensor.data_ptr(),
+                           (inputTensor.is_cuda() ? TORCH_UCX_CUDA: TORCH_UCX_HOST),
+                           inputTensor.scalar_type(),
+                           send_lengths, send_offsets,
+                           outputTensor.data_ptr(),
+                           (outputTensor.is_cuda() ? TORCH_UCX_CUDA: TORCH_UCX_HOST),
+                           outputTensor.scalar_type(),
+                           recv_lengths, recv_offsets,
+                           &coll_req);
     }
+    request->coll_req = coll_req;
+
     if (config.enable_progress_thread) {
         request->coll_req->dev_index = inputTensor.device().index();
         request->coll_req->dev_type  = inputTensor.device().type();
@@ -356,49 +386,6 @@ std::shared_ptr<ProcessGroup::Work> ProcessGroupUCC::alltoall_base(at::Tensor& o
         request->no_progress = true;
     }
     return request;
-    // if (config.enable_xccl) {
-    //     auto req = std::make_shared<ProcessGroupUCC::WorkUCC>();
-    //     xccl_coll_req_h     request;
-    //     xccl_coll_op_args_t coll_args;
-
-    //     if ((outputSplitSizes.size() == 0) || (inputSplitSizes.size() == 0)) {
-    //         coll_args.coll_type              = XCCL_ALLTOALL;
-    //         coll_args.buffer_info.src_buffer = inputTensor.data_ptr();
-    //         coll_args.buffer_info.dst_buffer = outputTensor.data_ptr();
-    //         coll_args.buffer_info.len        = inputTensor.element_size() * inputTensor.numel() / size_;
-    //         coll_args.alg.set_by_user        = 0;
-    //         coll_args.tag                    = 123;
-    //     } else {
-    //         req->scratch.resize(4 * size_);
-    //         uint32_t *send_lengths = req->scratch.data();
-    //         uint32_t *recv_lengths = (uint32_t*)((ptrdiff_t)send_lengths + 1*size_*sizeof(uint32_t));
-    //         uint32_t *send_offsets = (uint32_t*)((ptrdiff_t)send_lengths + 2*size_*sizeof(uint32_t));
-    //         uint32_t *recv_offsets = (uint32_t*)((ptrdiff_t)send_lengths + 3*size_*sizeof(uint32_t));
-
-    //         computeLengthsAndOffsets(size_, inputSplitSizes, inputTensor, send_lengths, send_offsets);
-    //         computeLengthsAndOffsets(size_, outputSplitSizes, outputTensor, recv_lengths, recv_offsets);
-
-    //         coll_args.coll_type                     = XCCL_ALLTOALLV;
-    //         coll_args.buffer_info.src_buffer        = inputTensor.data_ptr();
-    //         coll_args.buffer_info.src_displacements = send_offsets;
-    //         coll_args.buffer_info.src_counts        = send_lengths;
-    //         coll_args.buffer_info.src_datatype      = xccl_type_map.at(inputTensor.scalar_type());
-    //         coll_args.buffer_info.dst_buffer        = outputTensor.data_ptr();
-    //         coll_args.buffer_info.dst_displacements = recv_offsets;
-    //         coll_args.buffer_info.dst_counts        = recv_lengths;
-    //         coll_args.buffer_info.dst_datatype      = xccl_type_map.at(outputTensor.scalar_type());
-    //         coll_args.alg.set_by_user               = 0;
-    //         coll_args.tag                           = 123;
-    //     }
-
-    //     xccl_collective_init(&coll_args, &request, xccl_comm->xccl_team);
-    //     xccl_collective_post(request);
-
-    //     req->args = coll_args;
-    //     req->req  = request;
-    //     return req;
-    // }
-
 }
 
 std::shared_ptr<ProcessGroup::Work> ProcessGroupUCC::alltoall(std::vector<at::Tensor>& outputTensors,
