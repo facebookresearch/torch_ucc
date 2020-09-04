@@ -57,7 +57,10 @@ struct torch_ucc_coll_ops_t {
 };
 
 extern torch_ucc_coll_ops_t ucx_coll_ops;
+
+#ifdef WITH_XCCL
 extern torch_ucc_coll_ops_t xccl_coll_ops;
+#endif
 
 inline torch_ucc_status_t torch_ucc_coll_ops_init(torch_ucc_coll_ops_t *coll_ops)
 {
@@ -65,7 +68,12 @@ inline torch_ucc_status_t torch_ucc_coll_ops_init(torch_ucc_coll_ops_t *coll_ops
 
     env = std::getenv("TORCH_UCC_COLL_BACKEND");
     if ((env != NULL) && (!strcasecmp(env, "xccl"))) {
+#ifdef WITH_XCCL
         *coll_ops = xccl_coll_ops;
+#else
+        fprintf(stderr, "ProcessGroupUCC: plugin wasn't compiled with XCCL support\n");
+        return TORCH_UCC_ERROR;
+#endif
     } else {
         *coll_ops = ucx_coll_ops;
     }
