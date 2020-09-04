@@ -32,6 +32,15 @@ struct torch_ucc_coll_ops_t {
                                    void *recv_buffer, torch_ucx_memtype_t recv_mtype,
                                    size_t len, torch_ucc_coll_request_t **request);
 
+    torch_ucc_status_t (*alltoallv)(void *coll_comm,
+                                    void *send_buffer, torch_ucx_memtype_t send_mtype,
+                                    at::ScalarType send_data_type,
+                                    uint32_t *send_lengths, uint32_t *send_offsets,
+                                    void *recv_buffer, torch_ucx_memtype_t recv_mtype,
+                                    at::ScalarType recv_data_type,
+                                    uint32_t *recv_lengths, uint32_t *recv_offsets,
+                                    torch_ucc_coll_request_t **request);
+
     torch_ucc_status_t (*allreduce)(void *coll_comm,
                                     void *send_buffer, torch_ucx_memtype_t send_mtype,
                                     void *recv_buffer, torch_ucx_memtype_t recv_mtype,

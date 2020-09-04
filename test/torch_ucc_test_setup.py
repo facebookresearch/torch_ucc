@@ -39,5 +39,5 @@ def init_process_groups(bend):
 
 def check_tensor_equal(test_name, t1, t2):
     if not torch.all(torch.eq(t1, t2)):
-        print("Test {} failed: count {}: ".format(test_name))
+        print("Test {}: failed".format(test_name))
         sys.exit(1)

@@ -215,6 +215,23 @@ torch_ucc_status_t torch_xccl_comm_close(void *comm)
     return TORCH_UCC_OK;
 }
 
+std::map<ReduceOp, xccl_op_t> xccl_op_map = {
+    {ReduceOp::MIN,     XCCL_OP_MIN},
+    {ReduceOp::MAX,     XCCL_OP_MAX},
+    {ReduceOp::SUM,     XCCL_OP_SUM},
+    {ReduceOp::PRODUCT, XCCL_OP_PROD},
+};
+
+std::map<at::ScalarType, xccl_dt_t> xccl_type_map = {
+    {at::kByte,   XCCL_DT_UINT8},
+    {at::kChar,   XCCL_DT_INT8},
+    {at::kHalf,   XCCL_DT_FLOAT16},
+    {at::kDouble, XCCL_DT_FLOAT64},
+    {at::kFloat,  XCCL_DT_FLOAT32},
+    {at::kInt,    XCCL_DT_INT32},
+    {at::kLong,   XCCL_DT_INT64},
+};
+
 torch_ucc_status_t torch_xccl_alltoall(void *coll_comm,
                                        void *send_buffer, torch_ucx_memtype_t send_mtype,
                                        void *recv_buffer, torch_ucx_memtype_t recv_mtype,
@@ -243,22 +260,42 @@ torch_ucc_status_t torch_xccl_alltoall(void *coll_comm,
     return TORCH_UCC_OK;
 }
 
-std::map<ReduceOp, xccl_op_t> xccl_op_map = {
-    {ReduceOp::MIN,     XCCL_OP_MIN},
-    {ReduceOp::MAX,     XCCL_OP_MAX},
-    {ReduceOp::SUM,     XCCL_OP_SUM},
-    {ReduceOp::PRODUCT, XCCL_OP_PROD},
-};
+torch_ucc_status_t torch_xccl_alltoallv(void *coll_comm,
+                                        void *send_buffer, torch_ucx_memtype_t send_mtype,
+                                        at::ScalarType send_data_type,
+                                        uint32_t *send_lengths, uint32_t *send_offsets,
+                                        void *recv_buffer, torch_ucx_memtype_t recv_mtype,
+                                        at::ScalarType recv_data_type,
+                                        uint32_t *recv_lengths, uint32_t *recv_offsets,
+                                        torch_ucc_coll_request_t **request)
+{
+    torch_xccl_comm_t    *xccl_comm = (torch_xccl_comm_t*)coll_comm;
+    xccl_coll_req_h      xccl_req;
+    xccl_coll_op_args_t  coll_args;
+    torch_xccl_request_t *coll_req;
 
-std::map<at::ScalarType, xccl_dt_t> xccl_type_map = {
-    {at::kByte,   XCCL_DT_UINT8},
-    {at::kChar,   XCCL_DT_INT8},
-    {at::kHalf,   XCCL_DT_FLOAT16},
-    {at::kDouble, XCCL_DT_FLOAT64},
-    {at::kFloat,  XCCL_DT_FLOAT32},
-    {at::kInt,    XCCL_DT_INT32},
-    {at::kLong,   XCCL_DT_INT64},
-};
+    coll_req = new torch_xccl_request_t;
+    coll_req->status = TORCH_UCC_INPROGRESS;
+
+    coll_args.coll_type                     = XCCL_ALLTOALLV;
+    coll_args.buffer_info.src_buffer        = send_buffer;
+    coll_args.buffer_info.src_displacements = send_offsets;
+    coll_args.buffer_info.src_counts        = send_lengths;
+    coll_args.buffer_info.src_datatype      = xccl_type_map.at(send_data_type);
+    coll_args.buffer_info.dst_buffer        = recv_buffer;
+    coll_args.buffer_info.dst_displacements = recv_offsets;
+    coll_args.buffer_info.dst_counts        = recv_lengths;
+    coll_args.buffer_info.dst_datatype      = xccl_type_map.at(recv_data_type);
+    coll_args.alg.set_by_user               = 0;
+
+    xccl_collective_init(&coll_args, &xccl_req, xccl_comm->xccl_team);
+    xccl_collective_post(xccl_req);
+
+    coll_req->request = xccl_req;
+    *request = (torch_ucc_coll_request_t*)coll_req;
+
+    return TORCH_UCC_OK;
+}
 
 torch_ucc_status_t torch_xccl_allreduce(void *coll_comm,
                                         void *send_buffer, torch_ucx_memtype_t send_mtype,
@@ -327,6 +364,7 @@ torch_ucc_status_t torch_xccl_free(torch_ucc_coll_request_t *request)
 torch_ucc_coll_ops_t xccl_coll_ops {
     torch_xccl_comm_init,
     torch_xccl_alltoall,
+    torch_xccl_alltoallv,
     torch_xccl_allreduce,
     torch_xccl_progress,
     torch_xccl_test,
