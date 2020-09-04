@@ -33,9 +33,14 @@ jobs:
         ./configure --with-ucx=/opt/ucx --prefix=/opt/xccl
         make -j install
     - uses: actions/checkout@v1
-    - name: Build
+    - name: Build with UCX 
       run: |
-        WITH_CUDA=no UCX_HOME=/opt/ucx/ UCC_HOME=/opt/xccl/ python setup.py install 
+        UCX_HOME=/opt/ucx/ WITH_CUDA=no WITH_XCCL=no python setup.py install
+        UCX_HOME=/opt/ucx/install python setup.py clean --all
+        pip uninstall -y torch-ucc
+    - name: Build with UCX and XCCL
+      run: |
+        UCX_HOME=/opt/ucx/ WITH_CUDA=no WITH_XCCL=/opt/xccl/ python setup.py install
     - name: Tests
       run: |
         export LD_LIBRARY_PATH=/opt/ucx/lib:/opt/xccl/lib:$LD_LIBRARY_PATH
