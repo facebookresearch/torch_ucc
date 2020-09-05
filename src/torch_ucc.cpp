@@ -282,7 +282,8 @@ std::shared_ptr<ProcessGroup::Work> ProcessGroupUCC::allreduce(std::vector<at::T
 }
 
 std::shared_ptr<ProcessGroup::Work> ProcessGroupUCC::allreduce_coalesced(std::vector<at::Tensor>& tensors,
-                                                                         const AllreduceCoalescedOptions& opts) {
+                                                                         const AllreduceCoalescedOptions& opts)
+{
   throw std::runtime_error("ProcessGroupUCC does not support allreduce_coalesced");
 }
 
@@ -293,21 +294,36 @@ std::shared_ptr<ProcessGroup::Work> ProcessGroupUCC::reduce(std::vector<at::Tens
 }
 
 std::shared_ptr<ProcessGroup::Work> ProcessGroupUCC::allgather(std::vector<std::vector<at::Tensor>>& outputTensors,
-                                                              std::vector<at::Tensor>& inputTensors,
-                                                              const AllgatherOptions& opts)
+                                                               std::vector<at::Tensor>& inputTensors,
+                                                               const AllgatherOptions& opts)
 {
   throw std::runtime_error("ProcessGroupUCC does not support allgather");
 }
 
 std::shared_ptr<ProcessGroup::Work> ProcessGroupUCC::allgather_base(at::Tensor& outputBuffer,
                                                                     at::Tensor& inputBuffer,
-                                                                    const AllgatherOptions& opts) {
+                                                                    const AllgatherOptions& opts)
+{
   throw std::runtime_error("ProcessGroupUCC does not support allgather_base");
 }
 
 std::shared_ptr<ProcessGroup::Work> ProcessGroupUCC::barrier(
-    const BarrierOptions& opts) {
-  throw std::runtime_error("ProcessGroupUCC does not support barrier");
+    const BarrierOptions& opts)
+{
+    auto request = std::make_shared<ProcessGroupUCC::WorkColl>(coll_ops, nullptr, nullptr);
+    torch_ucc_coll_request_t *coll_req;
+    torch_ucc_status_t       st;
+
+    st = coll_ops.barrier(coll_comm, &coll_req);
+    if (st != TORCH_UCC_OK) {
+        throw std::runtime_error("ProcessGroupUCC: barrier failed");
+    }
+    request->coll_req = coll_req;
+    if (config.enable_progress_thread) {
+        enqueue_request(request->coll_req);
+        request->no_progress = true;
+    }
+    return request;
 }
 
 std::shared_ptr<ProcessGroup::Work> ProcessGroupUCC::gather(std::vector<std::vector<at::Tensor>>& outputTensors,

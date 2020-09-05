@@ -47,6 +47,8 @@ struct torch_ucc_coll_ops_t {
                                     int count, int element_size, at::ScalarType data_type,
                                     ReduceOp op, torch_ucc_coll_request_t **request);
 
+    torch_ucc_status_t (*barrier)(void *coll_comm, torch_ucc_coll_request_t **request);
+
     torch_ucc_status_t (*coll_progress)  (torch_ucc_coll_request_t *request);
 
     torch_ucc_status_t (*coll_test)      (torch_ucc_coll_request_t *request);

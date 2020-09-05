@@ -95,6 +95,12 @@ torch_ucc_status_t torch_ucx_coll_allreduce(void *coll_comm,
     return TORCH_UCC_ERROR;
 }
 
+torch_ucc_status_t torch_ucx_coll_barrier(void *coll_comm,
+                                          torch_ucc_coll_request_t **request)
+{
+    fprintf(stderr, "ProcessGroupUCC: UCX backend doesn't support barrier\n");
+    return TORCH_UCC_ERROR;
+}
 
 
 torch_ucc_coll_ops_t ucx_coll_ops {
@@ -102,6 +108,7 @@ torch_ucc_coll_ops_t ucx_coll_ops {
     torch_ucx_alltoall,
     torch_ucx_alltoallv,
     torch_ucx_coll_allreduce,
+    torch_ucx_coll_barrier,
     torch_ucx_coll_progress,
     torch_ucx_coll_test,
     torch_ucx_coll_free,
