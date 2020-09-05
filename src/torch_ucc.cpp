@@ -255,7 +255,7 @@ std::shared_ptr<ProcessGroup::Work> ProcessGroupUCC::broadcast(std::vector<at::T
 std::shared_ptr<ProcessGroup::Work> ProcessGroupUCC::allreduce(std::vector<at::Tensor>& tensors,
                                                                const AllreduceOptions& opts)
 {
-    auto request = std::make_shared<ProcessGroupUCC::WorkColl>(coll_ops);
+    auto request = std::make_shared<ProcessGroupUCC::WorkColl>(coll_ops, &tensors, nullptr);
     auto &tensor = tensors[0];
     torch_ucc_coll_request_t *coll_req;
     torch_ucc_status_t st;
@@ -271,7 +271,6 @@ std::shared_ptr<ProcessGroup::Work> ProcessGroupUCC::allreduce(std::vector<at::T
         throw std::runtime_error("ProcessGroupUCC: allreduce failed");
     }
     request->coll_req = coll_req;
-
     if (config.enable_progress_thread) {
         request->coll_req->dev_index = tensor.device().index();
         request->coll_req->dev_type  = tensor.device().type();
@@ -335,7 +334,9 @@ std::shared_ptr<ProcessGroup::Work> ProcessGroupUCC::alltoall_base(at::Tensor& o
                                                                    std::vector<int64_t>& inputSplitSizes,
                                                                    const AllToAllOptions& opts)
 {
-    auto request = std::make_shared<ProcessGroupUCC::WorkColl>(coll_ops);
+    std::vector<at::Tensor> inputTensors = {inputTensor};
+    std::vector<at::Tensor> outputTensors = {outputTensor};
+    auto request = std::make_shared<ProcessGroupUCC::WorkColl>(coll_ops, &inputTensors, &outputTensors);
     torch_ucc_coll_request_t *coll_req;
     torch_ucc_status_t       st;
 
@@ -378,7 +379,6 @@ std::shared_ptr<ProcessGroup::Work> ProcessGroupUCC::alltoall_base(at::Tensor& o
                            &coll_req);
     }
     request->coll_req = coll_req;
-
     if (config.enable_progress_thread) {
         request->coll_req->dev_index = inputTensor.device().index();
         request->coll_req->dev_type  = inputTensor.device().type();

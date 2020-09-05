@@ -50,7 +50,16 @@ class ProcessGroupUCC : public ProcessGroup {
 
     class WorkColl: public ProcessGroup::Work {
     public:
-        WorkColl(torch_ucc_coll_ops_t ops) {
+        WorkColl(torch_ucc_coll_ops_t ops,
+                 std::vector<at::Tensor>* srcPtr,
+                 std::vector<at::Tensor>* dstPtr)
+        {
+            if (srcPtr) {
+                src = *srcPtr;
+            }
+            if (dstPtr) {
+                dst = *dstPtr;
+            }
             coll_ops            = ops;
             no_progress         = false;
             alltoall_len_offset = NULL;
