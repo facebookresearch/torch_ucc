@@ -3,6 +3,7 @@
 #
 
 import time
+import sys
 import random
 from torch_ucc_test_setup import *
 
@@ -17,6 +18,8 @@ for i in range(comm_size):
     time.sleep(rand_sleep/1000)
     if i == comm_rank:
         print("rank {} checks in".format(comm_rank))
+        sys.stdout.flush()
     dist.barrier()
+dist.barrier()
 if comm_rank == 0:
     print("Test barrier: succeeded")

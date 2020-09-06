@@ -37,7 +37,27 @@ def init_process_groups(bend):
 
     return pg
 
-def check_tensor_equal(test_name, t1, t2):
-    if not torch.all(torch.eq(t1, t2)):
-        print("Test {}: failed".format(test_name))
+def check_tensor_equal(t1, t2):
+    if torch.all(torch.eq(t1, t2)):
+        return torch.tensor(1)
+    else:
+        return torch.tensor(0)
+
+def check_tensor_list_equal(t1, t2):
+    num_tensors = len(t1)
+    for i in range(num_tensors):
+        if not torch.all(torch.eq(t1[i], t2[i])):
+            return torch.tensor(0)
+    return torch.tensor(1)
+
+def print_test_head(test_name, comm_rank):
+    if comm_rank == 0:
+        print("{} test".format(test_name))
+        print("{0:20} {1}".format("count", "result"))
+
+def print_test_result(status, count, comm_rank, comm_size):
+    if comm_rank == 0:
+        result = "OK" if status == comm_size else "Failed" 
+        print("{0:20} {1}".format(str(count), result))
+    if status != comm_size:
         sys.exit(1)

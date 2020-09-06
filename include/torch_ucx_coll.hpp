@@ -57,25 +57,16 @@ struct torch_ucx_coll_request_t {
     int                      n_rreqs;
 };
 
-torch_ucc_status_t torch_ucx_coll_comm_init(torch_ucx_comm_t *p2p_comm,
-                                            void **comm);
-
-torch_ucc_status_t torch_ucx_coll_test(torch_ucc_coll_request_t *request);
-
 torch_ucc_status_t torch_ucx_alltoall(void *coll_comm,
-                                      void *send_buffer, torch_ucx_memtype_t send_mtype,
-                                      void *recv_buffer, torch_ucx_memtype_t recv_mtype,
-                                      size_t len, torch_ucc_coll_request_t **request);
+                                      at::Tensor &input_tensor,
+                                      at::Tensor &output_tensor,
+                                      torch_ucc_coll_request_t **request);
 
 torch_ucc_status_t torch_ucx_alltoallv(void *coll_comm,
-                                       void *send_buffer, torch_ucx_memtype_t send_mtype,
-                                       at::ScalarType send_data_type,
+                                       at::Tensor &input_tensor,
                                        uint32_t *send_lengths, uint32_t *send_offsets,
-                                       void *recv_buffer, torch_ucx_memtype_t recv_mtype,
-                                       at::ScalarType recv_data_type,
+                                       at::Tensor &output_tensor,
                                        uint32_t *recv_lengths, uint32_t *recv_offsets,
                                        torch_ucc_coll_request_t **request);
-
-torch_ucc_status_t torch_ucx_coll_comm_close(void *comm);
 
 }

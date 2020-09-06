@@ -13,6 +13,7 @@ comm_rank = dist.get_rank()
 
 counts = 2 ** np.arange(4, 24)
 
+print_test_head("Alltoallv", comm_rank)
 for count in counts:
     np.random.seed(3131)
 
@@ -30,7 +31,9 @@ for count in counts:
                            split[:, comm_rank],
                            split[comm_rank, :],
                            group=pg)
-    check_tensor_equal("alltoallv", recv_tensor, recv_tensor_test)
+    status = check_tensor_equal(recv_tensor, recv_tensor_test)
+    dist.all_reduce(status, group=pg)
+    print_test_result(status, "{}({})".format(count, input_size[comm_rank]), comm_rank, comm_size)
 
 if comm_rank == 0:
     print("Test alltoallv: succeeded")

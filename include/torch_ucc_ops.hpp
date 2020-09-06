@@ -19,33 +19,36 @@ enum torch_ucx_memtype_t {
 };
 
 struct torch_ucc_coll_request_t {
-    c10::DeviceIndex dev_index;
-    c10::DeviceType  dev_type;
+    c10::DeviceIndex         dev_index;
+    c10::DeviceType          dev_type;
+    std::vector<at::Tensor>  src;
+    std::vector<at::Tensor>  dst;
 };
 
 struct torch_ucc_coll_ops_t {
     torch_ucc_status_t (*coll_comm_init) (torch_ucx_comm_t *p2p_comm,
                                           void **coll_comm);
 
+    torch_ucc_status_t (*allgather)(void *coll_comm,
+                                    at::Tensor &input_tensor,
+                                    std::vector<at::Tensor>& output_tensors,
+                                    torch_ucc_coll_request_t **request);
+
     torch_ucc_status_t (*alltoall)(void *coll_comm,
-                                   void *send_buffer, torch_ucx_memtype_t send_mtype,
-                                   void *recv_buffer, torch_ucx_memtype_t recv_mtype,
-                                   size_t len, torch_ucc_coll_request_t **request);
+                                   at::Tensor &input_tensor,
+                                   at::Tensor &output_tensor,
+                                   torch_ucc_coll_request_t **request);
 
     torch_ucc_status_t (*alltoallv)(void *coll_comm,
-                                    void *send_buffer, torch_ucx_memtype_t send_mtype,
-                                    at::ScalarType send_data_type,
+                                    at::Tensor &input_tensor,
                                     uint32_t *send_lengths, uint32_t *send_offsets,
-                                    void *recv_buffer, torch_ucx_memtype_t recv_mtype,
-                                    at::ScalarType recv_data_type,
+                                    at::Tensor &output_tensor,
                                     uint32_t *recv_lengths, uint32_t *recv_offsets,
                                     torch_ucc_coll_request_t **request);
 
-    torch_ucc_status_t (*allreduce)(void *coll_comm,
-                                    void *send_buffer, torch_ucx_memtype_t send_mtype,
-                                    void *recv_buffer, torch_ucx_memtype_t recv_mtype,
-                                    int count, int element_size, at::ScalarType data_type,
-                                    ReduceOp op, torch_ucc_coll_request_t **request);
+    torch_ucc_status_t (*allreduce)(void *coll_comm, at::Tensor &tensor,
+                                    const AllreduceOptions& opts,
+                                    torch_ucc_coll_request_t **request);
 
     torch_ucc_status_t (*barrier)(void *coll_comm, torch_ucc_coll_request_t **request);
 
@@ -63,6 +66,18 @@ extern torch_ucc_coll_ops_t ucx_coll_ops;
 #ifdef WITH_XCCL
 extern torch_ucc_coll_ops_t xccl_coll_ops;
 #endif
+
+inline void torch_ucc_coll_request_init(torch_ucc_coll_request_t *request,
+                                        std::vector<at::Tensor> *srcPtr,
+                                        std::vector<at::Tensor> *dstPtr)
+{
+    if (srcPtr) {
+        request->src = *srcPtr;
+    }
+    if (dstPtr) {
+        request->dst = *dstPtr;
+    }
+}
 
 inline torch_ucc_status_t torch_ucc_coll_ops_init(torch_ucc_coll_ops_t *coll_ops)
 {
