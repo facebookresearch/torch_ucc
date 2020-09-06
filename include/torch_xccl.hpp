@@ -7,7 +7,7 @@
 #pragma once
 
 #include <api/xccl.h>
-#include "torch_ucc_sendrecv.hpp"
+#include <torch_ucc_sendrecv.hpp>
 #include <torch_ucc_ops.hpp>
 
 namespace c10d {

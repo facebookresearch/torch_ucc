@@ -255,18 +255,12 @@ std::shared_ptr<ProcessGroup::Work> ProcessGroupUCC::broadcast(std::vector<at::T
 std::shared_ptr<ProcessGroup::Work> ProcessGroupUCC::allreduce(std::vector<at::Tensor>& tensors,
                                                                const AllreduceOptions& opts)
 {
-    auto request = std::make_shared<ProcessGroupUCC::WorkColl>(coll_ops, &tensors, nullptr);
+    auto request = std::make_shared<ProcessGroupUCC::WorkColl>(coll_ops);
     auto &tensor = tensors[0];
     torch_ucc_coll_request_t *coll_req;
     torch_ucc_status_t st;
 
-    st = coll_ops.allreduce(coll_comm,
-                            tensor.data_ptr(),
-                            (tensor.is_cuda() ? TORCH_UCX_CUDA: TORCH_UCX_HOST),
-                            tensor.data_ptr(),
-                            (tensor.is_cuda() ? TORCH_UCX_CUDA: TORCH_UCX_HOST),
-                            tensor.numel(), tensor.element_size(), tensor.scalar_type(),
-                            opts.reduceOp, &coll_req);
+    st = coll_ops.allreduce(coll_comm, tensor, opts, &coll_req);
     if (st != TORCH_UCC_OK) {
         throw std::runtime_error("ProcessGroupUCC: allreduce failed");
     }
@@ -282,32 +276,61 @@ std::shared_ptr<ProcessGroup::Work> ProcessGroupUCC::allreduce(std::vector<at::T
 }
 
 std::shared_ptr<ProcessGroup::Work> ProcessGroupUCC::allreduce_coalesced(std::vector<at::Tensor>& tensors,
-                                                                         const AllreduceCoalescedOptions& opts) {
-  throw std::runtime_error("ProcessGroupUCC does not support allreduce_coalesced");
+                                                                         const AllreduceCoalescedOptions& opts)
+{
+    throw std::runtime_error("ProcessGroupUCC does not support allreduce_coalesced");
 }
 
 std::shared_ptr<ProcessGroup::Work> ProcessGroupUCC::reduce(std::vector<at::Tensor>& tensors,
                                                             const ReduceOptions& opts)
 {
-  throw std::runtime_error("ProcessGroupUCC does not support reduce");
+    throw std::runtime_error("ProcessGroupUCC does not support reduce");
 }
 
 std::shared_ptr<ProcessGroup::Work> ProcessGroupUCC::allgather(std::vector<std::vector<at::Tensor>>& outputTensors,
-                                                              std::vector<at::Tensor>& inputTensors,
-                                                              const AllgatherOptions& opts)
+                                                               std::vector<at::Tensor>& inputTensors,
+                                                               const AllgatherOptions& opts)
 {
-  throw std::runtime_error("ProcessGroupUCC does not support allgather");
+    auto request = std::make_shared<ProcessGroupUCC::WorkColl>(coll_ops);
+    torch_ucc_coll_request_t *coll_req;
+    torch_ucc_status_t       st;
+
+    st = coll_ops.allgather(coll_comm, inputTensors[0], outputTensors[0], &coll_req);
+    if (st != TORCH_UCC_OK) {
+        throw std::runtime_error("ProcessGroupUCC: allgather failed");
+    }
+    request->coll_req = coll_req;
+    if (config.enable_progress_thread) {
+        enqueue_request(request->coll_req);
+        request->no_progress = true;
+    }
+    return request;
 }
 
 std::shared_ptr<ProcessGroup::Work> ProcessGroupUCC::allgather_base(at::Tensor& outputBuffer,
                                                                     at::Tensor& inputBuffer,
-                                                                    const AllgatherOptions& opts) {
-  throw std::runtime_error("ProcessGroupUCC does not support allgather_base");
+                                                                    const AllgatherOptions& opts)
+{
+    throw std::runtime_error("ProcessGroupUCC does not support allgather_base");
 }
 
 std::shared_ptr<ProcessGroup::Work> ProcessGroupUCC::barrier(
-    const BarrierOptions& opts) {
-  throw std::runtime_error("ProcessGroupUCC does not support barrier");
+    const BarrierOptions& opts)
+{
+    auto request = std::make_shared<ProcessGroupUCC::WorkColl>(coll_ops);
+    torch_ucc_coll_request_t *coll_req;
+    torch_ucc_status_t       st;
+
+    st = coll_ops.barrier(coll_comm, &coll_req);
+    if (st != TORCH_UCC_OK) {
+        throw std::runtime_error("ProcessGroupUCC: barrier failed");
+    }
+    request->coll_req = coll_req;
+    if (config.enable_progress_thread) {
+        enqueue_request(request->coll_req);
+        request->no_progress = true;
+    }
+    return request;
 }
 
 std::shared_ptr<ProcessGroup::Work> ProcessGroupUCC::gather(std::vector<std::vector<at::Tensor>>& outputTensors,
@@ -319,13 +342,13 @@ std::shared_ptr<ProcessGroup::Work> ProcessGroupUCC::gather(std::vector<std::vec
 std::shared_ptr<ProcessGroup::Work> ProcessGroupUCC::scatter(std::vector<at::Tensor>& outputTensors,
                                                              std::vector<std::vector<at::Tensor>>& inputTensors,
                                                              const ScatterOptions& opts) {
-  throw std::runtime_error("ProcessGroupUCC does not support scatter");
+    throw std::runtime_error("ProcessGroupUCC does not support scatter");
 }
 
 std::shared_ptr<ProcessGroup::Work> ProcessGroupUCC::reduce_scatter(std::vector<at::Tensor>& outputTensors,
                                                                     std::vector<std::vector<at::Tensor>>& inputTensors,
                                                                     const ReduceScatterOptions& opts) {
-  throw std::runtime_error("ProcessGroupUCC does not support reduce_scatter");
+    throw std::runtime_error("ProcessGroupUCC does not support reduce_scatter");
 }
 
 std::shared_ptr<ProcessGroup::Work> ProcessGroupUCC::alltoall_base(at::Tensor& outputTensor,
@@ -334,20 +357,15 @@ std::shared_ptr<ProcessGroup::Work> ProcessGroupUCC::alltoall_base(at::Tensor& o
                                                                    std::vector<int64_t>& inputSplitSizes,
                                                                    const AllToAllOptions& opts)
 {
-    std::vector<at::Tensor> inputTensors = {inputTensor};
-    std::vector<at::Tensor> outputTensors = {outputTensor};
-    auto request = std::make_shared<ProcessGroupUCC::WorkColl>(coll_ops, &inputTensors, &outputTensors);
+    auto request = std::make_shared<ProcessGroupUCC::WorkColl>(coll_ops);
     torch_ucc_coll_request_t *coll_req;
     torch_ucc_status_t       st;
 
     if ((outputSplitSizes.size() == 0) && (inputSplitSizes.size() == 0)) {
-        coll_ops.alltoall(coll_comm,
-                          inputTensor.data_ptr(),
-                          (inputTensor.is_cuda() ? TORCH_UCX_CUDA: TORCH_UCX_HOST),
-                          outputTensor.data_ptr(),
-                          (outputTensor.is_cuda() ? TORCH_UCX_CUDA: TORCH_UCX_HOST),
-                          inputTensor.element_size() * inputTensor.numel() / size_,
-                          &coll_req);
+        st = coll_ops.alltoall(coll_comm, inputTensor, outputTensor, &coll_req);
+        if (st != TORCH_UCC_OK) {
+            throw std::runtime_error("ProcessGroupUCC: alltoall_base failed");
+        }
     } else {
         request->alltoall_len_offset = new uint32_t[4*size_];
         uint32_t *send_lengths = request->alltoall_len_offset;
@@ -367,14 +385,9 @@ std::shared_ptr<ProcessGroup::Work> ProcessGroupUCC::alltoall_base(at::Tensor& o
             throw std::runtime_error("ProcessGroupUCC: alltoallv failed");
         }
 
-        coll_ops.alltoallv(coll_comm,
-                           inputTensor.data_ptr(),
-                           (inputTensor.is_cuda() ? TORCH_UCX_CUDA: TORCH_UCX_HOST),
-                           inputTensor.scalar_type(),
+        coll_ops.alltoallv(coll_comm, inputTensor,
                            send_lengths, send_offsets,
-                           outputTensor.data_ptr(),
-                           (outputTensor.is_cuda() ? TORCH_UCX_CUDA: TORCH_UCX_HOST),
-                           outputTensor.scalar_type(),
+                           outputTensor,
                            recv_lengths, recv_offsets,
                            &coll_req);
     }
@@ -392,7 +405,7 @@ std::shared_ptr<ProcessGroup::Work> ProcessGroupUCC::alltoall(std::vector<at::Te
                                                               std::vector<at::Tensor>& inputTensors,
                                                               const AllToAllOptions& opts)
 {
-  throw std::runtime_error("ProcessGroupUCC does not support alltoall");
+    throw std::runtime_error("ProcessGroupUCC does not support alltoall");
 }
 
 std::shared_ptr<ProcessGroup::Work> ProcessGroupUCC::send(std::vector<at::Tensor>& tensors,
@@ -447,7 +460,7 @@ std::shared_ptr<ProcessGroup> ProcessGroupUCC::createProcessGroupUCC(
 }
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
-  m.def("createProcessGroupUCC", &ProcessGroupUCC::createProcessGroupUCC);
+    m.def("createProcessGroupUCC", &ProcessGroupUCC::createProcessGroupUCC);
 }
 
 } // namespace c10d
