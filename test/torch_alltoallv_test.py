@@ -21,9 +21,9 @@ for count in counts:
     input_size = np.sum(split, axis=1)
     output_size = np.sum(split, axis=0)
 
-    send_tensor = get_tensor(input_size[comm_rank])
-    recv_tensor = get_tensor(output_size[comm_rank])
-    recv_tensor_test = get_tensor(output_size[comm_rank])
+    send_tensor = get_tensor(input_size[comm_rank], args.use_cuda)
+    recv_tensor = get_tensor(output_size[comm_rank], args.use_cuda)
+    recv_tensor_test = get_tensor(output_size[comm_rank], args.use_cuda)
     dist.all_to_all_single(recv_tensor, send_tensor, 
                            split[:, comm_rank],
                            split[comm_rank, :])
