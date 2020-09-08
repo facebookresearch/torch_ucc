@@ -51,7 +51,7 @@ static inline void torch_ucx_memcpy(void *dst, torch_ucx_memtype_t dst_mtype,
     }
     cudaMemcpyAsync(dst, src, size, mk, comm->stream);
 #else
-    fprintf(stderr, "TorchUCC: CUDA buffers are used but plugin CUDA support is disabled");
+    fprintf(stderr, "TorchUCC: CUDA buffers are used but plugin CUDA support is disabled\n");
 #endif 
 }
 

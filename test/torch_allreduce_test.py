@@ -14,7 +14,7 @@ comm_rank = dist.get_rank()
 counts = 2 ** np.arange(24)
 print_test_head("Allreduce", comm_rank)
 for count in counts:
-    tensor_ucc = get_tensor(count)
+    tensor_ucc = get_tensor(count, args.use_cuda)
     tensor_test = tensor_ucc.clone()
     dist.all_reduce(tensor_ucc)
     dist.all_reduce(tensor_test, group=pg)

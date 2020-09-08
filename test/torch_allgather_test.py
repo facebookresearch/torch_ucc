@@ -15,12 +15,12 @@ comm_rank = dist.get_rank()
 counts = 2 ** np.arange(24)
 print_test_head("Allgather", comm_rank)
 for count in counts:
-    tensor_input = get_tensor(count)
+    tensor_input = get_tensor(count, args.use_cuda)
     tensors_out_ucc = []
     tensors_out_test = []
     for p in range(comm_size):
-        tensors_out_ucc.append(get_tensor(count));
-        tensors_out_test.append(get_tensor(count));
+        tensors_out_ucc.append(get_tensor(count, args.use_cuda));
+        tensors_out_test.append(get_tensor(count, args.use_cuda));
     dist.all_gather(tensors_out_ucc, tensor_input)
     dist.all_gather(tensors_out_test, tensor_input, group=pg)
     status = check_tensor_list_equal(tensors_out_ucc, tensors_out_test)

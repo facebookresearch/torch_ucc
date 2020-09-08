@@ -13,20 +13,32 @@ import os
 def parse_test_args():
     parser = argparse.ArgumentParser(description="PG UCC Test")
     parser.add_argument("--backend", type=str, default='mpi')
-    return parser.parse_args()
+    parser.add_argument("--use-cuda", default=False, action='store_true')
+    args = parser.parse_args()
+
+    if args.use_cuda and not torch.cuda.is_available():
+        print("CUDA is not available")
+        sys.exit(0)
+
+    return args
 
 
-def get_tensor(count):
-    t = torch.randint(0, 100, (count,), dtype=torch.int)
+def get_tensor(count, is_cuda):
+    dev = torch.device('cuda') if is_cuda else torch.device('cpu')
+    t = torch.randint(0, 100, (count,), dtype=torch.int, device=dev)
     return t
 
 def init_process_groups(bend):
     try:
         comm_size = int(os.environ['OMPI_COMM_WORLD_SIZE'])
         comm_rank = int(os.environ['OMPI_COMM_WORLD_RANK'])
+        local_rank = int(os.environ['OMPI_COMM_WORLD_LOCAL_RANK'])
     except:
         print('OMPI env variables are not found')
         sys.exit(1)
+
+    if torch.cuda.is_available():
+        torch.cuda.set_device(local_rank)
 
     os.environ['MASTER_PORT'] = '32167'
     os.environ['MASTER_ADDR'] = 'localhost'
