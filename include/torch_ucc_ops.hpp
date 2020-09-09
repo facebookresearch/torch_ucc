@@ -52,6 +52,9 @@ struct torch_ucc_coll_ops_t {
 
     torch_ucc_status_t (*barrier)(void *coll_comm, torch_ucc_coll_request_t **request);
 
+    torch_ucc_status_t (*broadcast)(void *coll_comm, at::Tensor &tensor,
+                                    int root, torch_ucc_coll_request_t **request);
+
     torch_ucc_status_t (*coll_progress)  (torch_ucc_coll_request_t *request);
 
     torch_ucc_status_t (*coll_test)      (torch_ucc_coll_request_t *request);

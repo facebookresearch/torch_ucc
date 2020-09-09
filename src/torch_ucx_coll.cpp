@@ -110,6 +110,14 @@ torch_ucc_status_t torch_ucx_coll_allgather(void *coll_comm,
     return TORCH_UCC_ERROR;
 }
 
+torch_ucc_status_t torch_ucx_coll_broadcast(void *coll_comm, at::Tensor &tensor,
+                                            int root,
+                                            torch_ucc_coll_request_t **request)
+{
+    fprintf(stderr, "ProcessGroupUCC: UCX backend doesn't support broadcast\n");
+    return TORCH_UCC_ERROR;
+}
+
 
 torch_ucc_coll_ops_t ucx_coll_ops {
     torch_ucx_coll_comm_init,
@@ -118,6 +126,7 @@ torch_ucc_coll_ops_t ucx_coll_ops {
     torch_ucx_alltoallv,
     torch_ucx_coll_allreduce,
     torch_ucx_coll_barrier,
+    torch_ucx_coll_broadcast,
     torch_ucx_coll_progress,
     torch_ucx_coll_test,
     torch_ucx_coll_free,

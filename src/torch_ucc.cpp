@@ -249,7 +249,24 @@ ProcessGroupUCC::~ProcessGroupUCC()
 std::shared_ptr<ProcessGroup::Work> ProcessGroupUCC::broadcast(std::vector<at::Tensor>& tensors,
                                                                const BroadcastOptions& opts)
 {
-  throw std::runtime_error("ProcessGroupUCC does not support broadcast");
+    auto request = std::make_shared<ProcessGroupUCC::WorkColl>(coll_ops);
+    auto &tensor = tensors[0];
+    torch_ucc_coll_request_t *coll_req;
+    torch_ucc_status_t st;
+
+    st = coll_ops.broadcast(coll_comm, tensor, opts.rootRank, &coll_req);
+    if (st != TORCH_UCC_OK) {
+        throw std::runtime_error("ProcessGroupUCC: broadcast failed");
+    }
+    request->coll_req = coll_req;
+    if (config.enable_progress_thread) {
+        request->coll_req->dev_index = tensor.device().index();
+        request->coll_req->dev_type  = tensor.device().type();
+        enqueue_request(request->coll_req);
+        request->no_progress = true;
+    }
+
+    return request;
 }
 
 std::shared_ptr<ProcessGroup::Work> ProcessGroupUCC::allreduce(std::vector<at::Tensor>& tensors,
