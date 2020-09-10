@@ -412,6 +412,38 @@ torch_ucc_status_t torch_xccl_barrier(void *coll_comm,
     return TORCH_UCC_OK;
 }
 
+torch_ucc_status_t torch_xccl_broadcast(void *coll_comm, at::Tensor &tensor,
+                                        int root,
+                                        torch_ucc_coll_request_t **request)
+{
+    torch_xccl_comm_t    *xccl_comm = (torch_xccl_comm_t*)coll_comm;
+    xccl_coll_req_h      xccl_req;
+    xccl_coll_op_args_t  coll_args;
+    torch_xccl_request_t *coll_req;
+
+    coll_req = new torch_xccl_request_t;
+    std::vector<at::Tensor> tensors = {tensor};
+    torch_ucc_coll_request_init((torch_ucc_coll_request_t*)coll_req, &tensors, nullptr);
+    coll_req->coll_type = XCCL_BCAST;
+    coll_req->comm      = xccl_comm;
+    coll_req->status    = TORCH_UCC_INPROGRESS;
+
+    coll_args.coll_type              = XCCL_BCAST;
+    coll_args.buffer_info.src_buffer = tensor.data_ptr();
+    coll_args.buffer_info.dst_buffer = tensor.data_ptr();
+    coll_args.buffer_info.len        = tensor.numel()*tensor.element_size();
+    coll_args.root                   = root;
+    coll_args.alg.set_by_user        = 0;
+
+    xccl_collective_init(&coll_args, &xccl_req, xccl_comm->xccl_team);
+    xccl_collective_post(xccl_req);
+
+    coll_req->request = xccl_req;
+    *request = (torch_ucc_coll_request_t*)coll_req;
+
+    return TORCH_UCC_OK;
+}
+
 torch_ucc_status_t torch_xccl_progress(torch_ucc_coll_request_t *request)
 {
     torch_xccl_request_t *req = (torch_xccl_request_t*)request;
@@ -435,7 +467,6 @@ torch_ucc_status_t torch_xccl_test(torch_ucc_coll_request_t *request)
     return req->status;
 }
 
-
 torch_ucc_status_t torch_xccl_free(torch_ucc_coll_request_t *request)
 {
     torch_xccl_request_t *req = (torch_xccl_request_t*)request;
@@ -457,6 +488,7 @@ torch_ucc_coll_ops_t xccl_coll_ops {
     torch_xccl_alltoallv,
     torch_xccl_allreduce,
     torch_xccl_barrier,
+    torch_xccl_broadcast,
     torch_xccl_progress,
     torch_xccl_test,
     torch_xccl_free,
