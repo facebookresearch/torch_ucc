@@ -73,7 +73,7 @@ torch_ucx_status_t torch_ucx_comm_init(torch_ucx_comm_t **ucx_comm,
     worker_attr.field_mask = UCP_WORKER_ATTR_FIELD_THREAD_MODE;
     ucp_worker_query(comm->worker, &worker_attr);
     if (worker_attr.thread_mode != UCS_THREAD_MODE_MULTI) {
-        fprintf(stderr, "TorchUCC: Thread mode multi is not supported");
+        fprintf(stderr, "TorchUCC: Thread mode multi is not supported\n");
     }
 
     st = ucp_worker_get_address(comm->worker, &local_addr, &local_addr_len);

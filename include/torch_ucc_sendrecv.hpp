@@ -105,7 +105,6 @@ struct torch_ucx_comm_t {
     ucp_context_h ctx;
     ucp_ep_h      *eps;
     ucp_worker_h  worker;
-    uint32_t      tag;
 };
 
 
@@ -134,7 +133,7 @@ torch_ucx_status_t
 torch_ucx_comm_init(torch_ucx_comm_t **comm,
                     int size, int rank,
                     const std::shared_ptr<Store>& store);
-void 
+void
 torch_ucx_comm_close(torch_ucx_comm_t *comm,
                      const std::shared_ptr<Store>& store);
 
@@ -164,7 +163,7 @@ torch_ucx_send_nb(torch_ucx_comm_t *comm,
         default:
             return TORCH_UCX_ERROR;
     };
-    //fprintf(stderr, "rank %d send tag %" PRIu64 "\n", comm->rank, ucp_tag);    
+    // fprintf(stderr, "rank %d send tag %" PRIu64 "(%d) shift %d\n", comm->rank, ucp_tag, tag, TORCH_UCX_OOB_TAG_BITS_OFFSET);
     st = ucp_tag_send_nb(ep, data, 1, dt, ucp_tag, torch_ucx_send_cmpl_cb);
     if (torch_ucx_check_req(st) != TORCH_UCX_OK) {
         return TORCH_UCX_ERROR;
@@ -199,7 +198,7 @@ torch_ucx_recv_nb(torch_ucx_comm_t *comm,
             return TORCH_UCX_ERROR;
     };
 
-    //fprintf(stderr, "rank %d recv tag %" PRIu64 " mask %" PRIu64 "\n", comm->rank, ucp_tag, ucp_tag_mask );
+    // fprintf(stderr, "rank %d recv tag %" PRIu64 " (%d) mask %" PRIu64 "\n", comm->rank, ucp_tag, tag, ucp_tag_mask );
     st = ucp_tag_recv_nb(comm->worker, data, 1, dt, ucp_tag, ucp_tag_mask,
                          torch_ucx_recv_cmpl_cb);
     if (torch_ucx_check_req(st) != TORCH_UCX_OK) {
