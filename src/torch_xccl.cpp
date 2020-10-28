@@ -485,8 +485,7 @@ torch_ucc_status_t torch_xccl_progress(torch_ucc_coll_request_t *request)
     torch_xccl_request_t *req = (torch_xccl_request_t *)request;
     xccl_status_t st;
 
-    if (req->status == TORCH_UCC_OPERATION_INITIALIZED)
-    {
+    if (req->status == TORCH_UCC_OPERATION_INITIALIZED) {
 
 #ifdef USE_CUDA
         /* For cuda tensors we need first to make sure that all operation submitted
@@ -502,14 +501,25 @@ torch_ucc_status_t torch_xccl_progress(torch_ucc_coll_request_t *request)
         req->status = TORCH_UCC_INPROGRESS;
     }
 
-    if (req->status == TORCH_UCC_INPROGRESS)
-    {
+    if (req->status == TORCH_UCC_INPROGRESS) {
         xccl_context_progress(req->comm->xccl_ctx);
         st = xccl_collective_test(req->request);
-        if (st != XCCL_INPROGRESS)
-        {
-            req->status = TORCH_UCC_OK;
+        if (st != XCCL_INPROGRESS) {
+            if (st != XCCL_OK) {
+                fprintf(stderr, "TorchUCC: context progress failed (%d) \n", st);
+                req->status = TORCH_UCC_ERROR;
+                return TORCH_UCC_ERROR;
+            }
+            if (req->coll_type == XCCL_ALLGATHER) {
+                int comm_size = req->comm->p2p_comm->size;
+                std::vector<at::Tensor> &output_vec = req->super.dst;
+                for (int i = 0; i < comm_size; ++i)
+                {
+                    output_vec[i].copy_(req->flat_tensor[i]);
+                }
+            }
             xccl_collective_finalize(req->request);
+            req->status = TORCH_UCC_OK;
         }
     }
 
@@ -532,15 +542,6 @@ torch_ucc_status_t torch_xccl_test(torch_ucc_coll_request_t *request)
 torch_ucc_status_t torch_xccl_free(torch_ucc_coll_request_t *request)
 {
     torch_xccl_request_t *req = (torch_xccl_request_t *)request;
-    if (req->coll_type == XCCL_ALLGATHER)
-    {
-        int comm_size = req->comm->p2p_comm->size;
-        std::vector<at::Tensor> &output_vec = req->super.dst;
-        for (int i = 0; i < comm_size; ++i)
-        {
-            output_vec[i].copy_(req->flat_tensor[i]);
-        }
-    }
     delete req;
     return TORCH_UCC_OK;
 }
