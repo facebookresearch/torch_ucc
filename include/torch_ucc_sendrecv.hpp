@@ -139,10 +139,10 @@ torch_ucx_status_t torch_ucx_comm_init(
     torch_ucx_comm_t** comm,
     int size,
     int rank,
-    const std::shared_ptr<Store>& store);
+    const c10::intrusive_ptr<Store>& store);
 void torch_ucx_comm_close(
     torch_ucx_comm_t* comm,
-    const std::shared_ptr<Store>& store);
+    const c10::intrusive_ptr<Store>& store);
 
 static inline torch_ucx_status_t torch_ucx_send_nb(
     torch_ucx_comm_t* comm,

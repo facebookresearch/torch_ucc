@@ -134,7 +134,7 @@ void ProcessGroupUCC::read_config() {
 }
 
 ProcessGroupUCC::ProcessGroupUCC(
-    const std::shared_ptr<Store>& store,
+    const c10::intrusive_ptr<Store>& store,
     int rank,
     int size)
     : ProcessGroup(rank, size), store_(store), stop_progress_loop(false) {
@@ -229,7 +229,7 @@ ProcessGroupUCC::~ProcessGroupUCC() {
   torch_ucx_comm_close(ucx_comm, store_);
 }
 
-std::shared_ptr<ProcessGroup::Work> ProcessGroupUCC::broadcast(
+c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::broadcast(
     std::vector<at::Tensor>& tensors,
     const BroadcastOptions& opts) {
   auto request = std::make_shared<ProcessGroupUCC::WorkColl>(coll_ops);
@@ -254,7 +254,7 @@ std::shared_ptr<ProcessGroup::Work> ProcessGroupUCC::broadcast(
   return request;
 }
 
-std::shared_ptr<ProcessGroup::Work> ProcessGroupUCC::allreduce(
+c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::allreduce(
     std::vector<at::Tensor>& tensors,
     const AllreduceOptions& opts) {
   auto request = std::make_shared<ProcessGroupUCC::WorkColl>(coll_ops);
@@ -279,20 +279,20 @@ std::shared_ptr<ProcessGroup::Work> ProcessGroupUCC::allreduce(
   return request;
 }
 
-std::shared_ptr<ProcessGroup::Work> ProcessGroupUCC::allreduce_coalesced(
+c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::allreduce_coalesced(
     std::vector<at::Tensor>& tensors,
     const AllreduceCoalescedOptions& opts) {
   throw std::runtime_error(
       "ProcessGroupUCC does not support allreduce_coalesced");
 }
 
-std::shared_ptr<ProcessGroup::Work> ProcessGroupUCC::reduce(
+c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::reduce(
     std::vector<at::Tensor>& tensors,
     const ReduceOptions& opts) {
   throw std::runtime_error("ProcessGroupUCC does not support reduce");
 }
 
-std::shared_ptr<ProcessGroup::Work> ProcessGroupUCC::allgather(
+c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::allgather(
     std::vector<std::vector<at::Tensor>>& outputTensors,
     std::vector<at::Tensor>& inputTensors,
     const AllgatherOptions& opts) {
@@ -315,14 +315,14 @@ std::shared_ptr<ProcessGroup::Work> ProcessGroupUCC::allgather(
   return request;
 }
 
-std::shared_ptr<ProcessGroup::Work> ProcessGroupUCC::allgather_base(
+c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::allgather_base(
     at::Tensor& outputBuffer,
     at::Tensor& inputBuffer,
     const AllgatherOptions& opts) {
   throw std::runtime_error("ProcessGroupUCC does not support allgather_base");
 }
 
-std::shared_ptr<ProcessGroup::Work> ProcessGroupUCC::barrier(
+c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::barrier(
     const BarrierOptions& opts) {
   auto request = std::make_shared<ProcessGroupUCC::WorkColl>(coll_ops);
   torch_ucc_coll_comm_t* ucc_comm;
@@ -342,28 +342,28 @@ std::shared_ptr<ProcessGroup::Work> ProcessGroupUCC::barrier(
   return request;
 }
 
-std::shared_ptr<ProcessGroup::Work> ProcessGroupUCC::gather(
+c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::gather(
     std::vector<std::vector<at::Tensor>>& outputTensors,
     std::vector<at::Tensor>& inputTensors,
     const GatherOptions& opts) {
   throw std::runtime_error("ProcessGroupUCC does not support gather");
 }
 
-std::shared_ptr<ProcessGroup::Work> ProcessGroupUCC::scatter(
+c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::scatter(
     std::vector<at::Tensor>& outputTensors,
     std::vector<std::vector<at::Tensor>>& inputTensors,
     const ScatterOptions& opts) {
   throw std::runtime_error("ProcessGroupUCC does not support scatter");
 }
 
-std::shared_ptr<ProcessGroup::Work> ProcessGroupUCC::reduce_scatter(
+c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::reduce_scatter(
     std::vector<at::Tensor>& outputTensors,
     std::vector<std::vector<at::Tensor>>& inputTensors,
     const ReduceScatterOptions& opts) {
   throw std::runtime_error("ProcessGroupUCC does not support reduce_scatter");
 }
 
-std::shared_ptr<ProcessGroup::Work> ProcessGroupUCC::alltoall_base(
+c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::alltoall_base(
     at::Tensor& outputTensor,
     at::Tensor& inputTensor,
     std::vector<int64_t>& outputSplitSizes,
@@ -422,14 +422,14 @@ std::shared_ptr<ProcessGroup::Work> ProcessGroupUCC::alltoall_base(
   return request;
 }
 
-std::shared_ptr<ProcessGroup::Work> ProcessGroupUCC::alltoall(
+c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::alltoall(
     std::vector<at::Tensor>& outputTensors,
     std::vector<at::Tensor>& inputTensors,
     const AllToAllOptions& opts) {
   throw std::runtime_error("ProcessGroupUCC does not support alltoall");
 }
 
-std::shared_ptr<ProcessGroup::Work> ProcessGroupUCC::send(
+c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::send(
     std::vector<at::Tensor>& tensors,
     int dstRank,
     int tag) {
@@ -448,7 +448,7 @@ std::shared_ptr<ProcessGroup::Work> ProcessGroupUCC::send(
   return std::make_shared<ProcessGroupUCC::WorkUCX>(req, ucx_comm);
 }
 
-std::shared_ptr<ProcessGroup::Work> ProcessGroupUCC::recv(
+c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::recv(
     std::vector<at::Tensor>& tensors,
     int srcRank,
     int tag) {
@@ -466,14 +466,14 @@ std::shared_ptr<ProcessGroup::Work> ProcessGroupUCC::recv(
   return std::make_shared<ProcessGroupUCC::WorkUCX>(req, ucx_comm);
 }
 
-std::shared_ptr<ProcessGroup::Work> ProcessGroupUCC::recvAnysource(
+c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::recvAnysource(
     std::vector<at::Tensor>& tensors,
     int tag) {
   throw std::runtime_error("ProcessGroupUCC: recvAnysource is not supported");
 }
 
-std::shared_ptr<ProcessGroup> ProcessGroupUCC::createProcessGroupUCC(
-    const std::shared_ptr<::c10d::Store>& store,
+c10::intrusive_ptr<ProcessGroup> ProcessGroupUCC::createProcessGroupUCC(
+    const c10::intrusive_ptr<::c10d::Store>& store,
     int rank,
     int size,
     const std::chrono::duration<float>& timeout) {

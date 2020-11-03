@@ -19,7 +19,7 @@ torch_ucx_status_t torch_ucx_comm_init(
     torch_ucx_comm_t** ucx_comm,
     int size,
     int rank,
-    const std::shared_ptr<Store>& store) {
+    const c10::intrusive_ptr<Store>& store) {
   ucp_params_t params;
   ucp_config_t* config;
   ucs_status_t st;
@@ -131,7 +131,7 @@ free_comm:
 
 void torch_ucx_comm_close(
     torch_ucx_comm_t* comm,
-    const std::shared_ptr<Store>& store) {
+    const c10::intrusive_ptr<Store>& store) {
   ucs_status_ptr_t close_req;
   ucs_status_t st;
 
