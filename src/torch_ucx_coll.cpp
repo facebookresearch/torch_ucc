@@ -78,7 +78,7 @@ torch_ucc_status_t torch_ucx_coll_free(torch_ucc_coll_request_t* request) {
 
 torch_ucc_status_t torch_ucx_coll_allreduce(
     torch_ucc_coll_comm_t* coll_comm,
-    at::Tensor& tensor,
+    std::vector<at::Tensor>& tensors,
     const AllreduceOptions& opts,
     torch_ucc_coll_request_t** request) {
   fprintf(stderr, "ProcessGroupUCC: UCX backend doesn't support allreduce\n");
@@ -94,7 +94,7 @@ torch_ucc_status_t torch_ucx_coll_barrier(
 
 torch_ucc_status_t torch_ucx_coll_allgather(
     torch_ucc_coll_comm_t* coll_comm,
-    at::Tensor& input_tensor,
+    std::vector<at::Tensor>& input_tensor,
     std::vector<at::Tensor>& output_tensors,
     torch_ucc_coll_request_t** request) {
   fprintf(stderr, "ProcessGroupUCC: UCX backend doesn't support allgather\n");
@@ -103,7 +103,7 @@ torch_ucc_status_t torch_ucx_coll_allgather(
 
 torch_ucc_status_t torch_ucx_coll_broadcast(
     torch_ucc_coll_comm_t* coll_comm,
-    at::Tensor& tensor,
+    std::vector<at::Tensor>& tensors,
     int root,
     torch_ucc_coll_request_t** request) {
   fprintf(stderr, "ProcessGroupUCC: UCX backend doesn't support broadcast\n");

@@ -47,11 +47,14 @@ class ProcessGroupUCC : public ProcessGroup {
 
   class WorkColl : public ProcessGroup::Work {
    public:
-    WorkColl(torch_ucc_coll_ops_t ops) {
-      coll_ops = ops;
-      no_progress = false;
-      alltoall_len_offset = NULL;
-    }
+    WorkColl(
+        torch_ucc_coll_ops_t ops,
+        std::list<std::shared_ptr<WorkColl>>& list)
+        : coll_ops(ops),
+          work_list(list),
+          external_progress(false),
+          scratch(nullptr) {}
+
     virtual ~WorkColl();
     bool isCompleted() override;
     bool isSuccess() const override;
@@ -60,9 +63,12 @@ class ProcessGroupUCC : public ProcessGroup {
 
    protected:
     torch_ucc_coll_ops_t coll_ops;
+    std::list<std::shared_ptr<WorkColl>>& work_list;
+    std::list<std::shared_ptr<WorkColl>>::iterator work_list_entry;
+    bool external_progress;
+    char* scratch;
     std::vector<at::Tensor> src;
     std::vector<at::Tensor> dst;
-    uint32_t* alltoall_len_offset;
     bool no_progress;
     torch_ucc_coll_request_t* coll_req;
 
@@ -168,12 +174,14 @@ class ProcessGroupUCC : public ProcessGroup {
   std::mutex pg_mutex;
   std::thread progress_thread;
   bool stop_progress_loop;
-  std::deque<torch_ucc_coll_request_t*> progress_queue;
+  std::list<std::shared_ptr<WorkColl>> progress_list;
   std::condition_variable queue_produce_cv;
   std::condition_variable queue_consume_cv;
 
   void progress_loop();
-  void enqueue_request(torch_ucc_coll_request_t* req);
+  std::shared_ptr<ProcessGroup::Work> enqueue_request(
+      torch_ucc_coll_request_t* req,
+      void* scratch);
   torch_ucc_coll_comm_t* get_coll_comm();
 
  private:

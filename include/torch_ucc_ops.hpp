@@ -42,7 +42,7 @@ struct torch_ucc_coll_ops_t {
 
   torch_ucc_status_t (*allgather)(
       torch_ucc_coll_comm_t* coll_comm,
-      at::Tensor& input_tensor,
+      std::vector<at::Tensor>& input_tensor,
       std::vector<at::Tensor>& output_tensors,
       torch_ucc_coll_request_t** request);
 
@@ -64,7 +64,7 @@ struct torch_ucc_coll_ops_t {
 
   torch_ucc_status_t (*allreduce)(
       torch_ucc_coll_comm_t* coll_comm,
-      at::Tensor& tensor,
+      std::vector<at::Tensor>& tensors,
       const AllreduceOptions& opts,
       torch_ucc_coll_request_t** request);
 
@@ -74,7 +74,7 @@ struct torch_ucc_coll_ops_t {
 
   torch_ucc_status_t (*broadcast)(
       torch_ucc_coll_comm_t* coll_comm,
-      at::Tensor& tensor,
+      std::vector<at::Tensor>& tensors,
       int root,
       torch_ucc_coll_request_t** request);
 
@@ -100,14 +100,15 @@ inline void torch_ucc_coll_request_init(
     std::vector<at::Tensor>* dstPtr) {
   if (srcPtr) {
     request->src = *srcPtr;
+    request->dev_index = request->src[0].device().index();
+    request->dev_type = request->src[0].device().type();
 #ifdef USE_CUDA
     if (request->src[0].is_cuda()) {
-      c10::DeviceIndex dev_index = request->src[0].device().index();
-
-      request->tensor_ready.record(at::cuda::getCurrentCUDAStream(dev_index));
+      request->tensor_ready.record(
+          at::cuda::getCurrentCUDAStream(request->dev_index));
       if (coll_comm->stream == nullptr) {
         coll_comm->stream = std::make_unique<at::cuda::CUDAStream>(
-            at::cuda::getStreamFromPool(dev_index));
+            at::cuda::getStreamFromPool(request->dev_index));
       }
       request->tensor_ready.block(*coll_comm->stream);
     }

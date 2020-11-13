@@ -313,7 +313,7 @@ std::map<at::ScalarType, xccl_dt_t> xccl_type_map = {
 
 torch_ucc_status_t torch_xccl_allgather(
     torch_ucc_coll_comm_t* coll_comm,
-    at::Tensor& input_tensor,
+    std::vector<at::Tensor>& input_tensors,
     std::vector<at::Tensor>& output_tensors,
     torch_ucc_coll_request_t** request) {
   torch_xccl_comm_t* xccl_comm = (torch_xccl_comm_t*)coll_comm;
@@ -323,7 +323,6 @@ torch_ucc_status_t torch_xccl_allgather(
   size_t buf_len;
 
   coll_req = new torch_xccl_request_t;
-  std::vector<at::Tensor> input_tensors = {input_tensor};
   torch_ucc_coll_request_init(
       coll_comm,
       (torch_ucc_coll_request_t*)coll_req,
@@ -334,10 +333,10 @@ torch_ucc_status_t torch_xccl_allgather(
   coll_req->status = TORCH_UCC_OPERATION_INITIALIZED;
   coll_req->flat_tensor = newLikeFlat(output_tensors);
 
-  buf_len = input_tensor.element_size() * input_tensor.numel() *
+  buf_len = input_tensors[0].element_size() * input_tensors[0].numel() *
       xccl_comm->p2p_comm->size;
   coll_args.coll_type = XCCL_ALLGATHER;
-  coll_args.buffer_info.src_buffer = input_tensor.data_ptr();
+  coll_args.buffer_info.src_buffer = input_tensors[0].data_ptr();
   coll_args.buffer_info.dst_buffer = coll_req->flat_tensor.data_ptr();
   coll_args.buffer_info.len = buf_len;
   coll_args.alg.set_by_user = 0;
@@ -450,7 +449,7 @@ error:
 
 torch_ucc_status_t torch_xccl_allreduce(
     torch_ucc_coll_comm_t* coll_comm,
-    at::Tensor& tensor,
+    std::vector<at::Tensor>& tensors,
     const AllreduceOptions& opts,
     torch_ucc_coll_request_t** request) {
   torch_xccl_comm_t* xccl_comm = (torch_xccl_comm_t*)coll_comm;
@@ -459,7 +458,6 @@ torch_ucc_status_t torch_xccl_allreduce(
   torch_xccl_request_t* coll_req;
 
   coll_req = new torch_xccl_request_t;
-  std::vector<at::Tensor> tensors = {tensor};
   torch_ucc_coll_request_init(
       coll_comm, (torch_ucc_coll_request_t*)coll_req, &tensors, nullptr);
   coll_req->coll_type = XCCL_ALLREDUCE;
@@ -467,12 +465,12 @@ torch_ucc_status_t torch_xccl_allreduce(
   coll_req->status = TORCH_UCC_OPERATION_INITIALIZED;
 
   coll_args.coll_type = XCCL_ALLREDUCE;
-  coll_args.buffer_info.src_buffer = tensor.data_ptr();
-  coll_args.buffer_info.dst_buffer = tensor.data_ptr();
-  coll_args.buffer_info.len = tensor.numel() * tensor.element_size();
-  coll_args.reduce_info.dt = xccl_type_map.at(tensor.scalar_type());
+  coll_args.buffer_info.src_buffer = tensors[0].data_ptr();
+  coll_args.buffer_info.dst_buffer = tensors[0].data_ptr();
+  coll_args.buffer_info.len = tensors[0].numel() * tensors[0].element_size();
+  coll_args.reduce_info.dt = xccl_type_map.at(tensors[0].scalar_type());
   coll_args.reduce_info.op = xccl_op_map.at(opts.reduceOp);
-  coll_args.reduce_info.count = tensor.numel();
+  coll_args.reduce_info.count = tensors[0].numel();
   coll_args.alg.set_by_user = 0;
 
   XCCL_CHECK_GOTO(
@@ -503,6 +501,7 @@ torch_ucc_status_t torch_xccl_barrier(
   coll_req->status = TORCH_UCC_OPERATION_INITIALIZED;
 
   coll_args.coll_type = XCCL_BARRIER;
+  coll_args.alg.set_by_user = 0;
   XCCL_CHECK_GOTO(
       xccl_collective_init(&coll_args, &xccl_req, xccl_comm->xccl_team), error);
   coll_req->request = xccl_req;
@@ -517,7 +516,7 @@ error:
 
 torch_ucc_status_t torch_xccl_broadcast(
     torch_ucc_coll_comm_t* coll_comm,
-    at::Tensor& tensor,
+    std::vector<at::Tensor>& tensors,
     int root,
     torch_ucc_coll_request_t** request) {
   torch_xccl_comm_t* xccl_comm = (torch_xccl_comm_t*)coll_comm;
@@ -526,7 +525,6 @@ torch_ucc_status_t torch_xccl_broadcast(
   torch_xccl_request_t* coll_req;
 
   coll_req = new torch_xccl_request_t;
-  std::vector<at::Tensor> tensors = {tensor};
   torch_ucc_coll_request_init(
       coll_comm, (torch_ucc_coll_request_t*)coll_req, &tensors, nullptr);
   coll_req->coll_type = XCCL_BCAST;
@@ -534,9 +532,9 @@ torch_ucc_status_t torch_xccl_broadcast(
   coll_req->status = TORCH_UCC_OPERATION_INITIALIZED;
 
   coll_args.coll_type = XCCL_BCAST;
-  coll_args.buffer_info.src_buffer = tensor.data_ptr();
-  coll_args.buffer_info.dst_buffer = tensor.data_ptr();
-  coll_args.buffer_info.len = tensor.numel() * tensor.element_size();
+  coll_args.buffer_info.src_buffer = tensors[0].data_ptr();
+  coll_args.buffer_info.dst_buffer = tensors[0].data_ptr();
+  coll_args.buffer_info.len = tensors[0].numel() * tensors[0].element_size();
   coll_args.root = root;
   coll_args.alg.set_by_user = 0;
 

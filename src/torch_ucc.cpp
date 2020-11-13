@@ -88,21 +88,31 @@ bool ProcessGroupUCC::WorkUCX::wait(std::chrono::milliseconds timeout) {
 
 ProcessGroupUCC::WorkColl::~WorkColl() {
   if (coll_req != NULL) {
+    if (coll_ops.coll_test(coll_req) != TORCH_UCC_OK) {
+      fprintf(
+          stderr,
+          "ProcessGroupUCC: warn removing request before collective finish\n");
+    }
     coll_ops.coll_finalize(coll_req);
   }
 
-  if (alltoall_len_offset != NULL) {
-    delete[] alltoall_len_offset;
+  if (scratch != nullptr) {
+    delete[] scratch;
   }
 }
 
 bool ProcessGroupUCC::WorkColl::isCompleted() {
   torch_ucc_status_t st;
 
-  if (!no_progress) {
+  if (!external_progress) {
     coll_ops.coll_progress(coll_req);
+    st = coll_ops.coll_test(coll_req);
+    if (st != TORCH_UCC_INPROGRESS) {
+      work_list.erase(work_list_entry);
+    }
+  } else {
+    st = coll_ops.coll_test(coll_req);
   }
-  st = coll_ops.coll_test(coll_req);
 
   return (st != TORCH_UCC_INPROGRESS);
 }
@@ -175,7 +185,6 @@ torch_ucc_coll_comm_t* ProcessGroupUCC::get_coll_comm() {
 void ProcessGroupUCC::progress_loop() {
   std::unique_lock<std::mutex> lock(pg_mutex);
   torch_ucc_status_t st;
-  torch_ucc_coll_request_t* req;
 
 #ifdef USE_CUDA
   auto device = c10::Device(c10::DeviceType::CUDA, (c10::DeviceIndex)0);
@@ -184,23 +193,24 @@ void ProcessGroupUCC::progress_loop() {
 #endif
 
   while (!stop_progress_loop) {
-    if (progress_queue.empty()) {
+    if (progress_list.empty()) {
       queue_produce_cv.wait(lock);
       continue;
     }
-    req = progress_queue.front();
-    progress_queue.pop_front();
+    auto work_coll = progress_list.front();
+    progress_list.pop_front();
     lock.unlock();
     queue_consume_cv.notify_one();
 #ifdef USE_CUDA
-    if (req->dev_type == c10::DeviceType::CUDA) {
-      guard.set_index(req->dev_index);
+    if (work_coll->coll_req->dev_type == c10::DeviceType::CUDA) {
+      guard.set_index(work_coll->coll_req->dev_index);
     }
 #endif
     do {
-      st = coll_ops.coll_progress(req);
-    } while ((coll_ops.coll_test(req) == TORCH_UCC_INPROGRESS) ||
-             (st != TORCH_UCC_OK));
+      st = coll_ops.coll_progress(work_coll->coll_req);
+    } while (
+        (coll_ops.coll_test(work_coll->coll_req) == TORCH_UCC_INPROGRESS) &&
+        (st == TORCH_UCC_OK));
     if (st != TORCH_UCC_OK) {
       fprintf(stderr, "ProcessGroupUCC: coll progress failed\n");
     }
@@ -208,23 +218,35 @@ void ProcessGroupUCC::progress_loop() {
   }
 }
 
-void ProcessGroupUCC::enqueue_request(torch_ucc_coll_request_t* req) {
+std::shared_ptr<ProcessGroup::Work> ProcessGroupUCC::enqueue_request(
+    torch_ucc_coll_request_t* req,
+    void* scratch) {
   std::unique_lock<std::mutex> lock(pg_mutex);
-  progress_queue.push_back(req);
+
+  auto iter = progress_list.emplace(
+      progress_list.end(),
+      std::make_shared<ProcessGroupUCC::WorkColl>(coll_ops, progress_list));
+  (*iter)->work_list_entry = iter;
+  (*iter)->coll_req = req;
+  (*iter)->external_progress = config.enable_progress_thread;
+  (*iter)->scratch = (char*)scratch;
   lock.unlock();
   queue_produce_cv.notify_one();
+  return *iter;
 }
 
 ProcessGroupUCC::~ProcessGroupUCC() {
   if (config.enable_progress_thread) {
     std::unique_lock<std::mutex> lock(pg_mutex);
-    queue_consume_cv.wait(lock, [&] { return progress_queue.empty(); });
+    queue_consume_cv.wait(lock, [&] { return progress_list.empty(); });
     stop_progress_loop = true;
     lock.unlock();
     queue_produce_cv.notify_all();
     progress_thread.join();
   }
-
+  if (progress_list.size() != 0) {
+    fprintf(stderr, "ProcessGroupUCC: warnning progress list is not empty\n");
+  }
   coll_ops.coll_comm_close(coll_comm);
   torch_ucx_comm_close(ucx_comm, store_);
 }
@@ -232,51 +254,32 @@ ProcessGroupUCC::~ProcessGroupUCC() {
 c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::broadcast(
     std::vector<at::Tensor>& tensors,
     const BroadcastOptions& opts) {
-  auto request = std::make_shared<ProcessGroupUCC::WorkColl>(coll_ops);
-  auto& tensor = tensors[0];
   torch_ucc_coll_comm_t* ucc_comm;
   torch_ucc_coll_request_t* coll_req;
   torch_ucc_status_t st;
 
   ucc_comm = get_coll_comm();
-  st = coll_ops.broadcast(ucc_comm, tensor, opts.rootRank, &coll_req);
+  st = coll_ops.broadcast(ucc_comm, tensors, opts.rootRank, &coll_req);
   if (st != TORCH_UCC_OK) {
     throw std::runtime_error("ProcessGroupUCC: broadcast failed");
   }
-  request->coll_req = coll_req;
-  if (config.enable_progress_thread) {
-    request->coll_req->dev_index = tensor.device().index();
-    request->coll_req->dev_type = tensor.device().type();
-    enqueue_request(request->coll_req);
-    request->no_progress = true;
-  }
-
-  return request;
+  return enqueue_request(coll_req, nullptr);
 }
 
 c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::allreduce(
     std::vector<at::Tensor>& tensors,
     const AllreduceOptions& opts) {
-  auto request = std::make_shared<ProcessGroupUCC::WorkColl>(coll_ops);
-  auto& tensor = tensors[0];
   torch_ucc_coll_comm_t* ucc_comm;
   torch_ucc_coll_request_t* coll_req;
   torch_ucc_status_t st;
 
   ucc_comm = get_coll_comm();
-  st = coll_ops.allreduce(ucc_comm, tensor, opts, &coll_req);
+  st = coll_ops.allreduce(ucc_comm, tensors, opts, &coll_req);
   if (st != TORCH_UCC_OK) {
     throw std::runtime_error("ProcessGroupUCC: allreduce failed");
   }
-  request->coll_req = coll_req;
-  if (config.enable_progress_thread) {
-    request->coll_req->dev_index = tensor.device().index();
-    request->coll_req->dev_type = tensor.device().type();
-    enqueue_request(request->coll_req);
-    request->no_progress = true;
-  }
 
-  return request;
+  return enqueue_request(coll_req, nullptr);
 }
 
 c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::allreduce_coalesced(
@@ -296,23 +299,16 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::allgather(
     std::vector<std::vector<at::Tensor>>& outputTensors,
     std::vector<at::Tensor>& inputTensors,
     const AllgatherOptions& opts) {
-  auto request = std::make_shared<ProcessGroupUCC::WorkColl>(coll_ops);
   torch_ucc_coll_comm_t* ucc_comm;
   torch_ucc_coll_request_t* coll_req;
   torch_ucc_status_t st;
 
   ucc_comm = get_coll_comm();
-  st = coll_ops.allgather(
-      ucc_comm, inputTensors[0], outputTensors[0], &coll_req);
+  st = coll_ops.allgather(ucc_comm, inputTensors, outputTensors[0], &coll_req);
   if (st != TORCH_UCC_OK) {
     throw std::runtime_error("ProcessGroupUCC: allgather failed");
   }
-  request->coll_req = coll_req;
-  if (config.enable_progress_thread) {
-    enqueue_request(request->coll_req);
-    request->no_progress = true;
-  }
-  return request;
+  return enqueue_request(coll_req, nullptr);
 }
 
 c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::allgather_base(
@@ -324,7 +320,6 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::allgather_base(
 
 c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::barrier(
     const BarrierOptions& opts) {
-  auto request = std::make_shared<ProcessGroupUCC::WorkColl>(coll_ops);
   torch_ucc_coll_comm_t* ucc_comm;
   torch_ucc_coll_request_t* coll_req;
   torch_ucc_status_t st;
@@ -334,12 +329,7 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::barrier(
   if (st != TORCH_UCC_OK) {
     throw std::runtime_error("ProcessGroupUCC: barrier failed");
   }
-  request->coll_req = coll_req;
-  if (config.enable_progress_thread) {
-    enqueue_request(request->coll_req);
-    request->no_progress = true;
-  }
-  return request;
+  return enqueue_request(coll_req, nullptr);
 }
 
 c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::gather(
@@ -369,33 +359,29 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::alltoall_base(
     std::vector<int64_t>& outputSplitSizes,
     std::vector<int64_t>& inputSplitSizes,
     const AllToAllOptions& opts) {
-  auto request = std::make_shared<ProcessGroupUCC::WorkColl>(coll_ops);
   torch_ucc_coll_comm_t* ucc_comm;
   torch_ucc_coll_request_t* coll_req;
   torch_ucc_status_t st;
+  uint32_t* scratch;
 
   ucc_comm = get_coll_comm();
   if ((outputSplitSizes.size() == 0) && (inputSplitSizes.size() == 0)) {
+    scratch = nullptr;
     st = coll_ops.alltoall(ucc_comm, inputTensor, outputTensor, &coll_req);
     if (st != TORCH_UCC_OK) {
       throw std::runtime_error("ProcessGroupUCC: alltoall_base failed");
     }
   } else {
-    request->alltoall_len_offset = new uint32_t[4 * size_];
-    uint32_t* send_lengths = request->alltoall_len_offset;
-    uint32_t* recv_lengths =
-        (uint32_t*)((ptrdiff_t)send_lengths + 1 * size_ * sizeof(uint32_t));
-    uint32_t* send_offsets =
-        (uint32_t*)((ptrdiff_t)send_lengths + 2 * size_ * sizeof(uint32_t));
-    uint32_t* recv_offsets =
-        (uint32_t*)((ptrdiff_t)send_lengths + 3 * size_ * sizeof(uint32_t));
-
+    scratch = new uint32_t[4 * size_];
+    uint32_t* send_lengths = scratch;
+    uint32_t* recv_lengths = scratch + 1 * size_;
+    uint32_t* send_offsets = scratch + 2 * size_;
+    uint32_t* recv_offsets = scratch + 3 * size_;
     st = compute_lengths_offsets(
         size_, outputSplitSizes, outputTensor, recv_lengths, recv_offsets);
     if (st != TORCH_UCC_OK) {
       throw std::runtime_error("ProcessGroupUCC: alltoallv failed");
     }
-
     st = compute_lengths_offsets(
         size_, inputSplitSizes, inputTensor, send_lengths, send_offsets);
     if (st != TORCH_UCC_OK) {
@@ -412,14 +398,7 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::alltoall_base(
         recv_offsets,
         &coll_req);
   }
-  request->coll_req = coll_req;
-  if (config.enable_progress_thread) {
-    request->coll_req->dev_index = inputTensor.device().index();
-    request->coll_req->dev_type = inputTensor.device().type();
-    enqueue_request(request->coll_req);
-    request->no_progress = true;
-  }
-  return request;
+  return enqueue_request(coll_req, scratch);
 }
 
 c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::alltoall(
