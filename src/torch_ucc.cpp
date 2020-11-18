@@ -218,21 +218,22 @@ void ProcessGroupUCC::progress_loop() {
   }
 }
 
-std::shared_ptr<ProcessGroup::Work> ProcessGroupUCC::enqueue_request(
+c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::enqueue_request(
     torch_ucc_coll_request_t* req,
     void* scratch) {
   std::unique_lock<std::mutex> lock(pg_mutex);
 
   auto iter = progress_list.emplace(
       progress_list.end(),
-      std::make_shared<ProcessGroupUCC::WorkColl>(coll_ops, progress_list));
+      c10::make_intrusive<ProcessGroupUCC::WorkColl>(coll_ops, progress_list));
   (*iter)->work_list_entry = iter;
   (*iter)->coll_req = req;
   (*iter)->external_progress = config.enable_progress_thread;
   (*iter)->scratch = (char*)scratch;
+  auto workreq = (*iter);
   lock.unlock();
   queue_produce_cv.notify_one();
-  return *iter;
+  return workreq;
 }
 
 ProcessGroupUCC::~ProcessGroupUCC() {
@@ -424,7 +425,7 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::send(
     throw std::runtime_error("ProcessGroupUCC: failed to send msg");
   }
 
-  return std::make_shared<ProcessGroupUCC::WorkUCX>(req, ucx_comm);
+  return c10::make_intrusive<ProcessGroupUCC::WorkUCX>(req, ucx_comm);
 }
 
 c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::recv(
@@ -442,7 +443,7 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::recv(
     throw std::runtime_error("ProcessGroupUCC: failed to recv msg");
   }
 
-  return std::make_shared<ProcessGroupUCC::WorkUCX>(req, ucx_comm);
+  return c10::make_intrusive<ProcessGroupUCC::WorkUCX>(req, ucx_comm);
 }
 
 c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::recvAnysource(
@@ -456,7 +457,7 @@ c10::intrusive_ptr<ProcessGroup> ProcessGroupUCC::createProcessGroupUCC(
     int rank,
     int size,
     const std::chrono::duration<float>& timeout) {
-  return std::make_shared<ProcessGroupUCC>(store, rank, size);
+  return c10::make_intrusive<ProcessGroupUCC>(store, rank, size);
 }
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {

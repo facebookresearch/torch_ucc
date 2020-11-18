@@ -49,7 +49,7 @@ class ProcessGroupUCC : public ProcessGroup {
    public:
     WorkColl(
         torch_ucc_coll_ops_t ops,
-        std::list<std::shared_ptr<WorkColl>>& list)
+        std::list<c10::intrusive_ptr<WorkColl>>& list)
         : coll_ops(ops),
           work_list(list),
           external_progress(false),
@@ -63,8 +63,8 @@ class ProcessGroupUCC : public ProcessGroup {
 
    protected:
     torch_ucc_coll_ops_t coll_ops;
-    std::list<std::shared_ptr<WorkColl>>& work_list;
-    std::list<std::shared_ptr<WorkColl>>::iterator work_list_entry;
+    std::list<c10::intrusive_ptr<WorkColl>>& work_list;
+    std::list<c10::intrusive_ptr<WorkColl>>::iterator work_list_entry;
     bool external_progress;
     char* scratch;
     std::vector<at::Tensor> src;
@@ -174,12 +174,12 @@ class ProcessGroupUCC : public ProcessGroup {
   std::mutex pg_mutex;
   std::thread progress_thread;
   bool stop_progress_loop;
-  std::list<std::shared_ptr<WorkColl>> progress_list;
+  std::list<c10::intrusive_ptr<WorkColl>> progress_list;
   std::condition_variable queue_produce_cv;
   std::condition_variable queue_consume_cv;
 
   void progress_loop();
-  std::shared_ptr<ProcessGroup::Work> enqueue_request(
+  c10::intrusive_ptr<ProcessGroup::Work> enqueue_request(
       torch_ucc_coll_request_t* req,
       void* scratch);
   torch_ucc_coll_comm_t* get_coll_comm();
