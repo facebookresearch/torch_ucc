@@ -16,27 +16,25 @@ when submitting contributions and changes.
 ## Build
 Required packages:
 * PyTorch
-* UCX
-* XCCL
+* [UCX](https://github.com/openucx/ucx)
+* [XCCL](https://github.com/openucx/xccl)
 
 ```shell
 # Build
-UCX_HOME=<PATH_TO_UCX> WITH_XCCL=<PATH_TO_XCCL> WITH_CUDA=<PATH_TO_CUDA> python setup.py clean --all install
+UCX_HOME=<PATH_TO_UCX> XCCL_HOME=<PATH_TO_XCCL> WITH_CUDA=<PATH_TO_CUDA> python setup.py clean --all install
 ```
 UCX_HOME required, specifies path to UCX installation directory
 
-WITH_XCCL optional, if WITH_XCCL=no is specified then only point to point, alltoall and alltoallv operations are available
+XCCL_HOME required, specifies path to XCCL installation directory
 
-WITH_CUDA optional, if WITH_CUDA=no is specified then only CPU tensors are supported
+WITH_CUDA optional, if WITH_CUDA=no is set then only CPU tensors are supported
 
 ## Run
 Configuration variables
 | Name                    | Values      | Description                                                                                                                                                                |
 |-------------------------|-------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| TORCH_UCC_COLL_BACKEND  | ucx or xccl | Set the backend that will be used for collective operations. UCX backend supports only alltoall and alltoallv collectives. |
 | TORCH_UCC_THREAD_ENABLE | 0 or 1      | If not equal to zero then dedicated thread will be used to progress point to point and collective operations. |
-| TORCH_UCC_UCX_REVERSE   | 0 or 1      | Determines order in which ranks traversed in alltoall pairwise exchange algorithm for UCX backend  |
-| TORCH_UCC_UCX_CHUNK     | integer     | Maximum number of outstanding send/recv in alltoall pairwise exchange algorithm for UCX backend. If -1 is set then number of outstanding send/recv is equal to group size. |
+| TORCH_UCC_TLS           | list of xccl team libraries | Allows to choose what xccl team libraries will be used |
  
 ```shell
 export LD_LIBRARY_PATH=<PATH_TO_UCX>/lib:<PATH_TO_XCCL>/lib:$LD_LIBRARY_PATH
