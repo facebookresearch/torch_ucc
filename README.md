@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # PyTorch plugin for UCC
 
 This repo implements PyTorch Process Group API for [UCC](https://www.ucfconsortium.org/projects/ucc/) as a third-party plugin.
