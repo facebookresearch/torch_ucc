@@ -1,3 +1,6 @@
+#
+# Copyright (C) Mellanox Technologies Ltd. 2001-2020.  ALL RIGHTS RESERVED.
+#
 
 import numpy as np
 from torch_ucc_test_setup import *

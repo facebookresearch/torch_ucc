@@ -1,3 +1,6 @@
+#
+# Copyright (C) Mellanox Technologies Ltd. 2001-2020.  ALL RIGHTS RESERVED.
+#
 
 import argparse
 import torch
