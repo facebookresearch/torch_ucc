@@ -1,6 +1,11 @@
 #
 # Copyright (C) Mellanox Technologies Ltd. 2001-2020.  ALL RIGHTS RESERVED.
 #
+# Copyright (c) Facebook, Inc. and its affiliates.
+#
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
+#
 
 import argparse
 import torch
@@ -101,4 +106,3 @@ while size <= args.max_size:
     if comm_rank == 0:
         print("%-10i %-10.3f %-10.3f %-10.3f" %(size, min_time[0] * (10**6), avg_time[0] * (10**6)/comm_size, max_time[0] * (10**6)))
     size = size * 2
-    
