@@ -1,5 +1,5 @@
 #
-# Copyright (C) Mellanox Technologies Ltd. 2020-2021.  ALL RIGHTS RESERVED.
+# Copyright (C) Mellanox Technologies Ltd. 2001-2021.
 #
 # Copyright (c) Facebook, Inc. and its affiliates.
 #
