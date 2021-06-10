@@ -563,7 +563,7 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::allgather(
       tensor.device());
 }
 
-c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::allgather_base(
+c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::_allgather_base(
     at::Tensor& /* unused */,
     at::Tensor& /* unused */,
     const AllgatherOptions& /* unused */) {
