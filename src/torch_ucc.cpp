@@ -526,6 +526,30 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::collective_post(
   return comm->enqueue_collective(opType, coll, std::move(data), team);
 }
 
+#ifdef USE_CUDA
+#define SAVE_TENSOR(_TENSOR, _DATA)                 \
+  if ((_TENSOR).device().is_cuda()) {               \
+    c10::cuda::CUDACachingAllocator::recordStream(  \
+        (_TENSOR).storage().data_ptr(), (*stream)); \
+  } else {                                          \
+    (_DATA) = {(_TENSOR)};                          \
+  }
+
+#define SAVE_TENSORS(_TENSORS, _DATA)                     \
+  if ((_TENSORS)[0].device().is_cuda()) {                 \
+    for (const auto i : c10::irange((_TENSORS).size())) { \
+      c10::cuda::CUDACachingAllocator::recordStream(      \
+          (_TENSORS)[i].storage().data_ptr(), (*stream)); \
+    }                                                     \
+  } else {                                                \
+    (_DATA) = (_TENSORS);                                 \
+  }
+#else
+#define SAVE_TENSOR(_TENSOR, _DATA) (_DATA) = {(_TENSOR)};
+
+#define SAVE_TENSORS(_TENSORS, _DATA) (_DATA) = (_TENSORS);
+#endif
+
 c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::allgather(
     std::vector<std::vector<at::Tensor>>& outputTensors,
     std::vector<at::Tensor>& inputTensors,
@@ -554,8 +578,9 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::allgather(
   coll.dst.info_v.datatype = UCC_DT_UINT8;
   coll.dst.info_v.mem_type =
       ucc_mtype_map.at(outputTensors[0][0].device().type());
-  data->src = inputTensors;
-  data->dst = outputTensors[0];
+  SAVE_TENSORS(inputTensors, data->src);
+  SAVE_TENSORS(outputTensors[0], data->dst);
+
   return collective_post(
       OpType::ALLGATHER,
       coll,
@@ -592,7 +617,8 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::allreduce(
   coll.dst.info.count = tensor.numel();
   coll.dst.info.datatype = ucc_dtype_map.at(tensor.scalar_type());
   coll.dst.info.mem_type = ucc_mtype_map.at(tensor.device().type());
-  data->src = tensors;
+  SAVE_TENSORS(tensors, data->src);
+
   return collective_post(
       OpType::ALLREDUCE,
       coll,
@@ -669,8 +695,9 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::alltoall_base(
     coll.flags = UCC_COLL_ARGS_FLAG_CONTIG_SRC_BUFFER |
                  UCC_COLL_ARGS_FLAG_CONTIG_DST_BUFFER;
   }
-  data->src = {inputTensor};
-  data->dst = {outputTensor};
+  SAVE_TENSOR(inputTensor, data->src);
+  SAVE_TENSOR(outputTensor, data->dst);
+
   return collective_post(
       OpType::ALLTOALL_BASE,
       coll,
@@ -705,6 +732,7 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::broadcast(
   coll.src.info.mem_type = ucc_mtype_map.at(tensor.device().type());
   coll.root = opts.rootRank;
   data->src = tensors;
+  SAVE_TENSORS(tensors, data->src);
 
   return collective_post(
       OpType::BROADCAST,
