@@ -75,6 +75,30 @@ namespace c10d {
     (_ucp_tag_mask) = (uint64_t)-1;                                \
   } while (0)
 
+#ifdef USE_CUDA
+#define SAVE_TENSOR(_TENSOR, _DATA)                 \
+  if ((_TENSOR).device().is_cuda()) {               \
+    c10::cuda::CUDACachingAllocator::recordStream(  \
+        (_TENSOR).storage().data_ptr(), (*stream)); \
+  } else {                                          \
+    (_DATA) = {(_TENSOR)};                          \
+  }
+
+#define SAVE_TENSORS(_TENSORS, _DATA)                     \
+  if ((_TENSORS)[0].device().is_cuda()) {                 \
+    for (const auto i : c10::irange((_TENSORS).size())) { \
+      c10::cuda::CUDACachingAllocator::recordStream(      \
+          (_TENSORS)[i].storage().data_ptr(), (*stream)); \
+    }                                                     \
+  } else {                                                \
+    (_DATA) = (_TENSORS);                                 \
+  }
+#else
+#define SAVE_TENSOR(_TENSOR, _DATA) (_DATA) = {(_TENSOR)};
+
+#define SAVE_TENSORS(_TENSORS, _DATA) (_DATA) = (_TENSORS);
+#endif
+
 enum torch_ucx_tag_type_t { TORCH_UCX_P2P_TAG, TORCH_UCX_OOB_TAG };
 
 struct event_pool_t {
