@@ -126,7 +126,6 @@ class ProcessGroupUCC : public ProcessGroup {
         OpType opType,
         ucc_status_t status,
         ucc_coll_req_h request,
-        ucc_ee_h ee,
         CommBase* comm)
         : ProcessGroup::Work(-1, opType),
           status_(status),
