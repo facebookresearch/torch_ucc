@@ -17,6 +17,7 @@
 #include <memory>
 #include <mutex>
 #include <queue>
+#include <thread>
 #include <vector>
 
 #include <pybind11/chrono.h>
