@@ -75,7 +75,7 @@ class CommUCC : public CommBase {
 
  public:
   void progress() override;
-  CommUCC(torch_ucc_oob_coll_info_t* oob_info);
+  CommUCC(std::shared_ptr<torch_ucc_oob_coll_info_t> oob_info);
   ~CommUCC();
 };
 

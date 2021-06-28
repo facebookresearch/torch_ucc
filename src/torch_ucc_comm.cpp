@@ -119,7 +119,7 @@ ucc_status_t oob_allgather_free(void* req) {
   return UCC_OK;
 }
 
-CommUCC::CommUCC(torch_ucc_oob_coll_info_t* oob_info) {
+CommUCC::CommUCC(std::shared_ptr<torch_ucc_oob_coll_info_t> oob_info) {
   ucc_lib_config_h lib_config;
   ucc_context_config_h context_config;
   ucc_lib_params_t lib_params;
@@ -179,7 +179,7 @@ CommUCC::CommUCC(torch_ucc_oob_coll_info_t* oob_info) {
   context_params.oob.allgather = oob_allgather;
   context_params.oob.req_test = oob_allgather_test;
   context_params.oob.req_free = oob_allgather_free;
-  context_params.oob.coll_info = oob_info;
+  context_params.oob.coll_info = oob_info.get();
   ucc_context_create(lib, &context_params, context_config, &context);
   ucc_context_config_release(context_config);
   if (st != UCC_OK) {

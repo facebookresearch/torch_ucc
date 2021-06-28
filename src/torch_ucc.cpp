@@ -151,9 +151,10 @@ void ProcessGroupUCC::WorkUCC::finalize() {
   }
 }
 
-CommPG::CommPG(torch_ucc_oob_coll_info_t* oob_info,
+CommPG::CommPG(std::shared_ptr<torch_ucc_oob_coll_info_t> oob_info,
     c10::Device dev)
-    : ucx_comm(oob_info->size),
+    : oob(oob_info),
+      ucx_comm(oob_info->size),
       ucc_comm(oob_info),
       cuda_device_index(TORCH_UCC_DEVICE_NOT_SET) {
   if (dev.is_cuda()) {
@@ -176,7 +177,7 @@ CommPG::~CommPG() {
 std::shared_ptr<CommPG> CommPG::get_comm(
     uint32_t& id,
     c10::Device dev,
-    torch_ucc_oob_coll_info_t *oob) {
+    std::shared_ptr<torch_ucc_oob_coll_info_t> oob) {
   static std::mutex m;
   static std::weak_ptr<CommPG> comm;
   static uint32_t comm_id;
@@ -203,9 +204,7 @@ std::shared_ptr<CommPG> CommPG::get_comm(
   return shared_comm;
 }
 
-void CommPG::ucx_connect_eps(
-    std::vector<ucp_ep_h>& eps,
-    torch_ucc_oob_coll_info_t* oob) {
+void CommPG::ucx_connect_eps(std::vector<ucp_ep_h>& eps) {
   ucs_status_t st;
   ucp_address_t* local_addr;
   size_t local_addr_len;
@@ -235,9 +234,7 @@ void CommPG::ucx_connect_eps(
   }
 }
 
-void CommPG::ucx_disconnect_eps(
-    std::vector<ucp_ep_h>& eps,
-    torch_ucc_oob_coll_info_t* oob) {
+void CommPG::ucx_disconnect_eps(std::vector<ucp_ep_h>& eps) {
   ucs_status_t st;
 
   for (ucp_ep_h& ep : eps) {
@@ -313,9 +310,7 @@ ucc_coll_req_h CommPG::recv_nb(
   return reinterpret_cast<ucc_coll_req_h>(st);
 }
 
-void CommPG::ucc_create_team(
-    ucc_team_h& team,
-    torch_ucc_oob_coll_info_t* oob_info) {
+void CommPG::ucc_create_team(ucc_team_h& team) {
   ucc_status_t st;
   ucc_team_params_t team_params;
   team_params.mask = UCC_TEAM_PARAM_FIELD_EP | UCC_TEAM_PARAM_FIELD_EP_RANGE |
@@ -323,9 +318,9 @@ void CommPG::ucc_create_team(
   team_params.oob.allgather = oob_allgather;
   team_params.oob.req_test = oob_allgather_test;
   team_params.oob.req_free = oob_allgather_free;
-  team_params.oob.coll_info = oob_info;
-  team_params.oob.participants = oob_info->size;
-  team_params.ep = oob_info->rank;
+  team_params.oob.coll_info = oob.get();
+  team_params.oob.participants = oob->size;
+  team_params.ep = oob->rank;
   team_params.ep_range = UCC_COLLECTIVE_EP_RANGE_CONTIG;
   st = ucc_team_create_post(&ucc_comm.context, 1, &team_params, &team);
   if (st != UCC_OK) {
@@ -476,9 +471,10 @@ ProcessGroupUCC::ProcessGroupUCC(
     int size)
     : ProcessGroup(rank, size) {
   std::call_once(torch_ucc_config.flag, read_confg);
-  oob.rank = rank;
-  oob.size = size;
-  oob.store = store;
+  oob = std::make_shared<torch_ucc_oob_coll_info_t>();
+  oob->rank = rank;
+  oob->size = size;
+  oob->store = store;
   comm = nullptr;
   cuda_ee = nullptr;
 }
@@ -486,15 +482,15 @@ ProcessGroupUCC::ProcessGroupUCC(
 ProcessGroupUCC::~ProcessGroupUCC() {
   if (comm) {
     comm->ucc_destroy_team(team);
-    comm->ucx_disconnect_eps(eps, &oob);
+    comm->ucx_disconnect_eps(eps);
     if (cuda_ee) {
       ucc_ee_destroy(cuda_ee);
     }
     comm = nullptr;
-    if ((size_t)oob.store->add(oob.getKey("ucc_pg_closed"), 1) == eps.size()) {
-      oob.store->add(oob.getKey("ucc_pg_finished"), 1);
+    if ((size_t)oob->store->add(oob->getKey("ucc_pg_closed"), 1) == eps.size()) {
+      oob->store->add(oob->getKey("ucc_pg_finished"), 1);
     } else {
-      oob.store->wait({oob.getKey("ucc_pg_finished")});
+      oob->store->wait({oob->getKey("ucc_pg_finished")});
     }
   }
 }
@@ -815,9 +811,9 @@ void ProcessGroupUCC::initComm(c10::Device dev) {
       c10::cuda::set_device(dev.index());
     }
 #endif
-    comm = CommPG::get_comm(comm_id, dev, &oob);
-    comm->ucx_connect_eps(eps, &oob);
-    comm->ucc_create_team(team, &oob);
+    comm = CommPG::get_comm(comm_id, dev, oob);
+    comm->ucx_connect_eps(eps);
+    comm->ucc_create_team(team);
   } else {
     if (dev.is_cuda()) {
       if ((comm->cuda_device_index != TORCH_UCC_DEVICE_NOT_SET) &&
