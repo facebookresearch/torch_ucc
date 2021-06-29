@@ -282,9 +282,11 @@ class ProcessGroupUCC : public ProcessGroup {
   std::unique_ptr<at::cuda::CUDAStream> stream = nullptr;
   event_pool_t ep;
 #endif
+  c10::intrusive_ptr<Store> store;
 };
 
 class CommPG {
+  c10::intrusive_ptr<Store> store;
   CommUCX ucx_comm;
   CommUCC ucc_comm;
   c10::DeviceIndex device_index;
@@ -297,7 +299,8 @@ class CommPG {
 
  public:
   c10::DeviceIndex cuda_device_index;
-  CommPG(torch_ucc_oob_coll_info_t* oob_info,
+  CommPG(const c10::intrusive_ptr<Store>& store,
+      torch_ucc_oob_coll_info_t* oob_info,
       c10::Device dev);
 
   ~CommPG();
@@ -339,6 +342,7 @@ class CommPG {
       ucc_team_h& team);
 
   static std::shared_ptr<CommPG> get_comm(
+      const c10::intrusive_ptr<Store>& store,
       uint32_t& id,
       c10::Device dev,
       torch_ucc_oob_coll_info_t *oob);

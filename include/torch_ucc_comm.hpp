@@ -39,7 +39,7 @@
 namespace c10d {
 
 struct torch_ucc_oob_coll_info_t {
-  c10::intrusive_ptr<Store> store;
+  Store *store;
   uint32_t comm_id;
   int rank;
   int size;

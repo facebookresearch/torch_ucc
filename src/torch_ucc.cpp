@@ -151,9 +151,11 @@ void ProcessGroupUCC::WorkUCC::finalize() {
   }
 }
 
-CommPG::CommPG(torch_ucc_oob_coll_info_t* oob_info,
+CommPG::CommPG(const c10::intrusive_ptr<Store>& store,
+    torch_ucc_oob_coll_info_t* oob_info,
     c10::Device dev)
-    : ucx_comm(oob_info->size),
+    : store(store),
+      ucx_comm(oob_info->size),
       ucc_comm(oob_info),
       cuda_device_index(TORCH_UCC_DEVICE_NOT_SET) {
   if (dev.is_cuda()) {
@@ -174,6 +176,7 @@ CommPG::~CommPG() {
 }
 
 std::shared_ptr<CommPG> CommPG::get_comm(
+    const c10::intrusive_ptr<Store>& store,
     uint32_t& id,
     c10::Device dev,
     torch_ucc_oob_coll_info_t *oob) {
@@ -186,7 +189,7 @@ std::shared_ptr<CommPG> CommPG::get_comm(
   oob->comm_id = id;
   std::shared_ptr<CommPG> shared_comm = comm.lock();
   if (!shared_comm) {
-    shared_comm = std::make_shared<CommPG>(oob, dev);
+    shared_comm = std::make_shared<CommPG>(store, oob, dev);
     comm = shared_comm;
   } else {
     if (dev.is_cuda()) {
@@ -219,11 +222,11 @@ void CommPG::ucx_connect_eps(
   std::vector<uint8_t> val = std::vector<uint8_t>(
       reinterpret_cast<uint8_t*>(local_addr),
       reinterpret_cast<uint8_t*>(local_addr) + local_addr_len);
-  oob->store->set(oob->getKey("wa" + std::to_string(oob->rank)), val);
+  store->set(oob->getKey("wa" + std::to_string(oob->rank)), val);
   ucp_worker_release_address(ucx_comm.worker, local_addr);
   eps.resize(oob->size);
   for (int i = 0; i < oob->size; i++) {
-    peer_addr = oob->store->get(oob->getKey("wa" + std::to_string(i)));
+    peer_addr = store->get(oob->getKey("wa" + std::to_string(i)));
     ucp_ep_params_t ep_params;
     ep_params.field_mask = UCP_EP_PARAM_FIELD_REMOTE_ADDRESS;
     ep_params.address = reinterpret_cast<ucp_address_t*>(peer_addr.data());
@@ -254,10 +257,10 @@ void CommPG::ucx_disconnect_eps(
       ucp_request_free(close_req);
     }
   }
-  if ((size_t)oob->store->add(oob->getKey("epclosed"), 1) == eps.size()) {
-    oob->store->add(oob->getKey("epfinished"), 1);
+  if ((size_t)store->add(oob->getKey("epclosed"), 1) == eps.size()) {
+    store->add(oob->getKey("epfinished"), 1);
   } else {
-    oob->store->wait({oob->getKey("epfinished")});
+    store->wait({oob->getKey("epfinished")});
   }
 }
 
@@ -474,11 +477,11 @@ ProcessGroupUCC::ProcessGroupUCC(
     const c10::intrusive_ptr<Store>& store,
     int rank,
     int size)
-    : ProcessGroup(rank, size) {
+    : ProcessGroup(rank, size), store(store) {
   std::call_once(torch_ucc_config.flag, read_confg);
   oob.rank = rank;
   oob.size = size;
-  oob.store = store;
+  oob.store = store.get();
   comm = nullptr;
   cuda_ee = nullptr;
 }
@@ -815,7 +818,7 @@ void ProcessGroupUCC::initComm(c10::Device dev) {
       c10::cuda::set_device(dev.index());
     }
 #endif
-    comm = CommPG::get_comm(comm_id, dev, &oob);
+    comm = CommPG::get_comm(store, comm_id, dev, &oob);
     comm->ucx_connect_eps(eps, &oob);
     comm->ucc_create_team(team, &oob);
   } else {
