@@ -42,14 +42,14 @@ jobs:
         /opt/ucx/bin/ucx_info -e -u t
         export UCX_LOG_LEVEL=info
         echo "UCC barrier"
-        /bin/bash ./test/start_test.sh ./test/torch_barrier_test.py --backend=gloo
+        /bin/bash ./test/start_test.sh ./test/torch_barrier_test.py --backend=ucc
         echo "UCC alltoall"
-        /bin/bash ./test/start_test.sh ./test/torch_alltoall_test.py --backend=gloo
+        /bin/bash ./test/start_test.sh ./test/torch_alltoall_test.py --backend=ucc
         echo "UCC alltoallv"
-        /bin/bash ./test/start_test.sh ./test/torch_alltoallv_test.py --backend=gloo
+        /bin/bash ./test/start_test.sh ./test/torch_alltoallv_test.py --backend=ucc
         echo "UCC allgather"
-        /bin/bash ./test/start_test.sh ./test/torch_allgather_test.py --backend=gloo
+        /bin/bash ./test/start_test.sh ./test/torch_allgather_test.py --backend=ucc
         echo "UCC allreduce"
-        /bin/bash ./test/start_test.sh ./test/torch_allreduce_test.py --backend=gloo
+        /bin/bash ./test/start_test.sh ./test/torch_allreduce_test.py --backend=ucc
         echo "UCC broadcast"
-        /bin/bash ./test/start_test.sh ./test/torch_bcast_test.py --backend=gloo
+        /bin/bash ./test/start_test.sh ./test/torch_bcast_test.py --backend=ucc
