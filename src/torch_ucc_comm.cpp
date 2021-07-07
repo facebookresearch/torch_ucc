@@ -43,7 +43,7 @@ CommUCX::CommUCX(int comm_size) {
   }
   memset(&worker_params, 0, sizeof(ucp_worker_params_t));
   worker_params.field_mask = UCP_WORKER_PARAM_FIELD_THREAD_MODE;
-  worker_params.thread_mode = UCS_THREAD_MODE_MULTI;
+  worker_params.thread_mode = UCS_THREAD_MODE_SINGLE;
   st = ucp_worker_create(context, &worker_params, &worker);
   if (st != UCS_OK) {
     LOG(ERROR) << "failed to create UCP worker: " << ucs_status_string(st);
@@ -133,7 +133,7 @@ CommUCC::CommUCC(torch_ucc_oob_coll_info_t* oob_info) {
   }
   memset(&lib_params, 0, sizeof(ucc_lib_params_t));
   lib_params.mask = UCC_LIB_PARAM_FIELD_THREAD_MODE;
-  lib_params.thread_mode = UCC_THREAD_MULTIPLE;
+  lib_params.thread_mode = UCC_THREAD_SINGLE;
   st = ucc_init(&lib_params, lib_config, &lib);
   ucc_lib_config_release(lib_config);
   if (st != UCC_OK) {
@@ -146,11 +146,6 @@ CommUCC::CommUCC(torch_ucc_oob_coll_info_t* oob_info) {
   if (st != UCC_OK) {
     LOG(ERROR) << "failed to query for lib attr: " << ucc_status_string(st);
     throw std::runtime_error(ucc_status_string(st));
-  }
-  if (lib_attr.thread_mode != UCC_THREAD_MULTIPLE) {
-    LOG(ERROR) << "ucc library wasn't initialized with mt support "
-               << "check ucc compile options ";
-    throw std::runtime_error("failed to init ucc lib");
   }
   st = ucc_context_config_read(lib, NULL, &context_config);
   if (st != UCC_OK) {
