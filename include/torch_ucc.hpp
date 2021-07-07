@@ -76,26 +76,19 @@ namespace c10d {
   } while (0)
 
 #ifdef USE_CUDA
-#define SAVE_TENSOR(_TENSOR, _DATA)                 \
-  if ((_TENSOR).device().is_cuda()) {               \
-    c10::cuda::CUDACachingAllocator::recordStream(  \
-        (_TENSOR).storage().data_ptr(), (*stream)); \
-  } else {                                          \
-    (_DATA) = {(_TENSOR)};                          \
-  }
+#define SAVE_TENSORS(_TENSORS, _DATA)                       \
+  do {                                                      \
+    if ((_TENSORS)[0].device().is_cuda()) {                 \
+      for (const auto i : c10::irange((_TENSORS).size())) { \
+        c10::cuda::CUDACachingAllocator::recordStream(      \
+            (_TENSORS)[i].storage().data_ptr(), (*stream)); \
+      }                                                     \
+    } else {                                                \
+      (_DATA) = (_TENSORS);                                 \
+    }                                                       \
+  } while (0)
 
-#define SAVE_TENSORS(_TENSORS, _DATA)                     \
-  if ((_TENSORS)[0].device().is_cuda()) {                 \
-    for (const auto i : c10::irange((_TENSORS).size())) { \
-      c10::cuda::CUDACachingAllocator::recordStream(      \
-          (_TENSORS)[i].storage().data_ptr(), (*stream)); \
-    }                                                     \
-  } else {                                                \
-    (_DATA) = (_TENSORS);                                 \
-  }
 #else
-#define SAVE_TENSOR(_TENSOR, _DATA) (_DATA) = {(_TENSOR)};
-
 #define SAVE_TENSORS(_TENSORS, _DATA) (_DATA) = (_TENSORS);
 #endif
 
@@ -135,8 +128,8 @@ class ProcessGroupUCC : public ProcessGroup {
   class AllgatherWorkData : public WorkData {
    public:
     AllgatherWorkData(int size)
-        : recv_lengths(size),
-          recv_offsets(size) {}
+      : recv_lengths(size),
+        recv_offsets(size) {}
     std::vector<uint64_t> recv_lengths;
     std::vector<uint64_t> recv_offsets;
   };
@@ -162,6 +155,11 @@ class ProcessGroupUCC : public ProcessGroup {
     bool wait(std::chrono::milliseconds timeout = kUnsetTimeout) override;
     void finalize();
     std::unique_ptr<WorkData> data;
+#ifdef USE_UCC_FUTURE
+    void finishWorkUCC();
+    void finishWorkUCCError(std::exception_ptr eptr);
+    c10::intrusive_ptr<c10::ivalue::Future> getFuture() override;
+#endif
 #ifdef USE_CUDA
     std::unique_ptr<at::cuda::CUDAEvent> fence = nullptr;
     event_pool_t* ep = nullptr;
@@ -170,6 +168,12 @@ class ProcessGroupUCC : public ProcessGroup {
     ucc_status_t status_;
     ucc_coll_req_h request_;
     CommBase* comm_;
+
+#ifdef USE_UCC_FUTURE
+   private:
+    // The future returned by getFuture.
+    c10::intrusive_ptr<at::ivalue::Future> future_;
+#endif
   };
 
   explicit ProcessGroupUCC(
