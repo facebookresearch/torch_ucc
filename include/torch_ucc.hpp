@@ -146,6 +146,7 @@ class ProcessGroupUCC : public ProcessGroup {
         ucc_ee_h ee,
         CommBase* comm)
         : ProcessGroup::Work(-1, opType),
+          ee_(ee),
           status_(status),
           request_(request),
           comm_(comm) {}
@@ -163,8 +164,12 @@ class ProcessGroupUCC : public ProcessGroup {
 #ifdef USE_CUDA
     std::unique_ptr<at::cuda::CUDAEvent> fence = nullptr;
     event_pool_t* ep = nullptr;
+    at::cuda::CUDAStream* stream;
 #endif
    protected:
+    ucc_coll_args_t args;
+    ucc_team_h team;
+    ucc_ee_h ee_;
     ucc_status_t status_;
     ucc_coll_req_h request_;
     CommBase* comm_;
@@ -297,8 +302,12 @@ class CommPG {
   std::condition_variable queue_produce_cv;
   std::condition_variable queue_consume_cv;
   std::deque<c10::intrusive_ptr<ProcessGroupUCC::WorkUCC>> progress_queue;
+  std::deque<c10::intrusive_ptr<ProcessGroupUCC::WorkUCC>> post_queue;
+  std::deque<c10::intrusive_ptr<ProcessGroupUCC::WorkUCC>> post_queue_cpu;
   bool stop_progress_loop;
 
+  void post_cpu_collective(c10::intrusive_ptr<ProcessGroupUCC::WorkUCC> post_req);
+  void post_cuda_collective(c10::intrusive_ptr<ProcessGroupUCC::WorkUCC> post_req);
  public:
   c10::DeviceIndex cuda_device_index;
   CommPG(torch_ucc_oob_coll_info_t* oob_info,
@@ -332,7 +341,7 @@ class CommPG {
       ucc_team_h& team,
       ucc_ee_h ee,
       std::unique_ptr<at::cuda::CUDAEvent> cuda_ev,
-      const at::cuda::CUDAStream& stream,
+      at::cuda::CUDAStream& stream,
       event_pool_t* ep);
 #endif
 
