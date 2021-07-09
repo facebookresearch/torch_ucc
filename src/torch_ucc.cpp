@@ -372,6 +372,7 @@ void CommPG::ucc_create_team(
   }
   do {
     st = ucc_team_create_test(team);
+    ucc_context_progress(ucc_comm.context);
   } while (st == UCC_INPROGRESS);
   if (st != UCC_OK) {
     LOG(ERROR) << "failed to create UCC team: " << ucc_status_string(st);
