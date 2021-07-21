@@ -145,8 +145,9 @@ class ProcessGroupUCC : public ProcessGroup {
         ucc_status_t status,
         ucc_coll_req_h request,
         ucc_ee_h ee,
-        CommBase* comm)
-        : ProcessGroup::Work(-1, opType),
+        CommBase* comm,
+        const char* prof_title)
+        : ProcessGroup::Work(-1, opType, prof_title),
           status_(status),
           request_(request),
           comm_(comm) {}
@@ -190,7 +191,8 @@ class ProcessGroupUCC : public ProcessGroup {
       OpType opType,
       ucc_coll_args_t& coll,
       std::unique_ptr<ProcessGroupUCC::WorkData> data,
-      c10::Device dev);
+      c10::Device dev,
+      const char* prof_title);
 
   c10::intrusive_ptr<ProcessGroup::Work> broadcast(
       std::vector<at::Tensor>& data,
@@ -323,7 +325,8 @@ class CommPG {
 
   c10::intrusive_ptr<ProcessGroup::Work> enqueue_p2p(
       OpType opType,
-      ucc_coll_req_h request);
+      ucc_coll_req_h request,
+      const char* prof_title);
 
 #ifdef USE_CUDA
   c10::intrusive_ptr<ProcessGroupUCC::WorkUCC> enqueue_cuda_collective(
@@ -334,14 +337,16 @@ class CommPG {
       ucc_ee_h ee,
       std::unique_ptr<at::cuda::CUDAEvent> cuda_ev,
       const at::cuda::CUDAStream& stream,
-      event_pool_t* ep);
+      event_pool_t* ep,
+      const char* prof_title);
 #endif
 
   c10::intrusive_ptr<ProcessGroupUCC::WorkUCC> enqueue_collective(
       OpType opType,
       ucc_coll_args_t& coll,
       std::unique_ptr<ProcessGroupUCC::WorkData> data,
-      ucc_team_h& team);
+      ucc_team_h& team,
+      const char* prof_title);
 
   static std::shared_ptr<CommPG> get_comm(
       uint32_t& id,
