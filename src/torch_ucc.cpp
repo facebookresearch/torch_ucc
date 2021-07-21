@@ -396,10 +396,10 @@ c10::intrusive_ptr<ProcessGroup::Work> CommPG::enqueue_p2p(
   if (request == nullptr) {
     // p2p2 request completed immediately don't save it to progress queue
     return c10::make_intrusive<ProcessGroupUCC::WorkUCC>(
-        opType, UCC_OK, request, nullptr, &ucx_comm);
+        opType, UCC_OK, request, &ucx_comm);
   }
   auto work = c10::make_intrusive<ProcessGroupUCC::WorkUCC>(
-      opType, UCC_INPROGRESS, request, nullptr, &ucx_comm);
+      opType, UCC_INPROGRESS, request, &ucx_comm);
   std::unique_lock<std::mutex> lock(mutex);
   progress_queue.push_back(work);
   lock.unlock();
@@ -425,7 +425,7 @@ c10::intrusive_ptr<ProcessGroupUCC::WorkUCC> CommPG::enqueue_collective(
     throw std::runtime_error(ucc_status_string(st));
   }
   auto work = c10::make_intrusive<ProcessGroupUCC::WorkUCC>(
-      opType, UCC_INPROGRESS, request, nullptr, &ucc_comm);
+      opType, UCC_INPROGRESS, request, &ucc_comm);
   work->data = std::move(data);
 #ifdef USE_UCC_FUTURE
   if (torch_ucc_config.use_future) {
@@ -472,7 +472,7 @@ c10::intrusive_ptr<ProcessGroupUCC::WorkUCC> CommPG::enqueue_cuda_collective(
   TORCH_CHECK(st == UCC_OK && post_ev->ev_type == UCC_EVENT_COLLECTIVE_POST);
   ucc_ee_ack_event(ee, post_ev);
   auto work = c10::make_intrusive<ProcessGroupUCC::WorkUCC>(
-      opType, UCC_INPROGRESS, request, ee, &ucc_comm);
+      opType, UCC_INPROGRESS, request, &ucc_comm);
   work->data = std::move(data);
   work->ep = ep;
   cuda_ev->record(stream);
