@@ -126,10 +126,10 @@ void check_tensor(const std::vector<at::Tensor>& tensors) {
 ProcessGroupUCC::WorkUCC::~WorkUCC() {
   TORCH_CHECK(request_ == nullptr, "TorchUCC, request wasn't finalized");
 #ifdef USE_CUDA
-    if (fence && ep) {
-        std::lock_guard<std::mutex> lock(ep->event_pool_mutex);
-        ep->event_pool.push(std::move(fence));
-    }
+  if (fence && ep) {
+    std::lock_guard<std::mutex> lock(ep->event_pool_mutex);
+    ep->event_pool.push(std::move(fence));
+  }
 #endif
 }
 
@@ -173,8 +173,7 @@ void ProcessGroupUCC::WorkUCC::finishWorkUCC() {
   finish();
 }
 
-c10::intrusive_ptr<c10::ivalue::Future> ProcessGroupUCC::WorkUCC::
-    getFuture() {
+c10::intrusive_ptr<c10::ivalue::Future> ProcessGroupUCC::WorkUCC::getFuture() {
   return future_;
 }
 #endif // #ifdef USE_UCC_FUTURE
@@ -195,11 +194,23 @@ void ProcessGroupUCC::WorkUCC::finalize() {
 #endif
 }
 
-CommPG::CommPG(torch_ucc_oob_coll_info_t* oob_info,
+CommPG::CommPG(
+    uint32_t comm_id,
+    int rank,
+    int size,
+    c10::intrusive_ptr<Store> str,
     c10::Device dev)
-    : ucx_comm(oob_info->size),
-      ucc_comm(oob_info),
+    : store(str),
+      ucx_comm(size),
+      ucc_comm(),
       cuda_device_index(TORCH_UCC_DEVICE_NOT_SET) {
+  ucx_connect_eps(eps, rank, size, store);
+  ucx_oob.comm_id = comm_id;
+  ucx_oob.rank = rank;
+  ucx_oob.size = size;
+  ucx_oob.worker = ucx_comm.worker;
+  ucx_oob.eps = eps;
+  ucc_comm.create_context(&ucx_oob);
   if (dev.is_cuda()) {
     cuda_device_index = dev.index();
   }
@@ -209,6 +220,8 @@ CommPG::CommPG(torch_ucc_oob_coll_info_t* oob_info,
 }
 
 CommPG::~CommPG() {
+  ucc_comm.destroy_context();
+  ucx_disconnect_eps(eps, ucx_oob.rank, ucx_oob.size, store);
   std::unique_lock<std::mutex> lock(mutex);
   queue_consume_cv.wait(lock, [&] { return progress_queue.empty(); });
   stop_progress_loop = true;
@@ -217,20 +230,33 @@ CommPG::~CommPG() {
   progress_thread.join();
 }
 
+void CommPG::store_barrier() {
+  static int seq_num;
+  std::string seq_num_str = std::to_string(seq_num);
+
+  if ((size_t)store->add("epclosed" + seq_num_str, 1) == eps.size()) {
+    store->add("epfinished" + seq_num_str, 1);
+  } else {
+    store->wait({"epfinished" + seq_num_str});
+  }
+  seq_num++;
+}
+
 std::shared_ptr<CommPG> CommPG::get_comm(
     uint32_t& id,
     c10::Device dev,
-    torch_ucc_oob_coll_info_t *oob) {
+    int rank,
+    int size,
+    c10::intrusive_ptr<Store> store) {
   static std::mutex m;
   static std::weak_ptr<CommPG> comm;
   static uint32_t comm_id;
 
   std::lock_guard<std::mutex> lock(m);
   id = (comm_id++ % TORCH_UCX_COMM_BITS);
-  oob->comm_id = id;
   std::shared_ptr<CommPG> shared_comm = comm.lock();
   if (!shared_comm) {
-    shared_comm = std::make_shared<CommPG>(oob, dev);
+    shared_comm = std::make_shared<CommPG>(id, rank, size, store, dev);
     comm = shared_comm;
   } else {
     if (dev.is_cuda()) {
@@ -247,9 +273,19 @@ std::shared_ptr<CommPG> CommPG::get_comm(
   return shared_comm;
 }
 
+void CommPG::ucx_get_eps(std::vector<ucp_ep_h>& ucx_eps, int size) {
+  if ((size_t)size != eps.size()) {
+    LOG(ERROR) << "creating subgroups is not supported";
+    throw std::runtime_error("not supported");
+  }
+  ucx_eps = eps;
+}
+
 void CommPG::ucx_connect_eps(
     std::vector<ucp_ep_h>& eps,
-    torch_ucc_oob_coll_info_t* oob) {
+    int rank,
+    int size,
+    c10::intrusive_ptr<Store> store) {
   ucs_status_t st;
   ucp_address_t* local_addr;
   size_t local_addr_len;
@@ -263,11 +299,11 @@ void CommPG::ucx_connect_eps(
   std::vector<uint8_t> val = std::vector<uint8_t>(
       reinterpret_cast<uint8_t*>(local_addr),
       reinterpret_cast<uint8_t*>(local_addr) + local_addr_len);
-  oob->store->set(oob->getKey("wa" + std::to_string(oob->rank)), val);
+  store->set("wa" + std::to_string(rank), val);
   ucp_worker_release_address(ucx_comm.worker, local_addr);
-  eps.resize(oob->size);
-  for (int i = 0; i < oob->size; i++) {
-    peer_addr = oob->store->get(oob->getKey("wa" + std::to_string(i)));
+  eps.resize(size);
+  for (int i = 0; i < size; i++) {
+    peer_addr = store->get("wa" + std::to_string(i));
     ucp_ep_params_t ep_params;
     ep_params.field_mask = UCP_EP_PARAM_FIELD_REMOTE_ADDRESS;
     ep_params.address = reinterpret_cast<ucp_address_t*>(peer_addr.data());
@@ -281,7 +317,9 @@ void CommPG::ucx_connect_eps(
 
 void CommPG::ucx_disconnect_eps(
     std::vector<ucp_ep_h>& eps,
-    torch_ucc_oob_coll_info_t* oob) {
+    int rank,
+    int size,
+    c10::intrusive_ptr<Store> store) {
   ucs_status_t st;
 
   for (ucp_ep_h& ep : eps) {
@@ -298,11 +336,7 @@ void CommPG::ucx_disconnect_eps(
       ucp_request_free(close_req);
     }
   }
-  if ((size_t)oob->store->add(oob->getKey("epclosed"), 1) == eps.size()) {
-    oob->store->add(oob->getKey("epfinished"), 1);
-  } else {
-    oob->store->wait({oob->getKey("epfinished")});
-  }
+  store_barrier();
 }
 
 ucc_coll_req_h CommPG::send_nb(
@@ -357,43 +391,34 @@ ucc_coll_req_h CommPG::recv_nb(
   return reinterpret_cast<ucc_coll_req_h>(st);
 }
 
-void CommPG::ucc_create_team(
-    ucc_team_h& team,
-    torch_ucc_oob_coll_info_t* oob_info) {
+void CommPG::ucc_create_team(ucc_team_h& team) {
+  ucc_coll_args_t coll;
   ucc_status_t st;
-  ucc_team_params_t team_params;
-  team_params.mask = UCC_TEAM_PARAM_FIELD_EP | UCC_TEAM_PARAM_FIELD_EP_RANGE |
-      UCC_TEAM_PARAM_FIELD_OOB;
-  team_params.oob.allgather = oob_allgather;
-  team_params.oob.req_test = oob_allgather_test;
-  team_params.oob.req_free = oob_allgather_free;
-  team_params.oob.coll_info = oob_info;
-  team_params.oob.participants = oob_info->size;
-  team_params.ep = oob_info->rank;
-  team_params.ep_range = UCC_COLLECTIVE_EP_RANGE_CONTIG;
-  st = ucc_team_create_post(&ucc_comm.context, 1, &team_params, &team);
+  ucc_coll_req_h request;
+
+  ucc_comm.create_team(&team, &ucx_oob);
+  coll.mask = 0;
+  coll.coll_type = UCC_COLL_TYPE_BARRIER;
+  st = ucc_collective_init(&coll, &request, team);
   if (st != UCC_OK) {
-    LOG(ERROR) << "failed to post team create: " << ucc_status_string(st);
+    LOG(ERROR) << "failed to init collective: " << ucc_status_string(st);
+    throw std::runtime_error(ucc_status_string(st));
+  }
+  st = ucc_collective_post(request);
+  if (st != UCC_OK) {
+    LOG(ERROR) << "failed to post collective: " << ucc_status_string(st);
     throw std::runtime_error(ucc_status_string(st));
   }
   do {
-    st = ucc_team_create_test(team);
-    ucc_context_progress(ucc_comm.context);
+    ucx_comm.progress();
+    ucc_comm.progress();
+    st = ucc_collective_test(request);
   } while (st == UCC_INPROGRESS);
-  if (st != UCC_OK) {
-    LOG(ERROR) << "failed to create UCC team: " << ucc_status_string(st);
-    throw std::runtime_error(ucc_status_string(st));
-  }
+  ucc_collective_finalize(request);
 }
 
 void CommPG::ucc_destroy_team(ucc_team_h& team) {
-  ucc_status_t status;
-  while (UCC_INPROGRESS == (status = ucc_team_destroy(team))) {
-    if (UCC_OK != status) {
-      LOG(ERROR) << "ucc team destroy error: " << ucc_status_string(status);
-      break;
-    }
-  }
+  ucc_comm.destroy_team(team);
 }
 
 c10::intrusive_ptr<ProcessGroup::Work> CommPG::enqueue_p2p(
@@ -438,7 +463,7 @@ c10::intrusive_ptr<ProcessGroupUCC::WorkUCC> CommPG::enqueue_collective(
 #ifdef USE_UCC_FUTURE
   if (torch_ucc_config.use_future) {
     work->future_ = c10::make_intrusive<at::ivalue::Future>(
-          c10::ListType::create(c10::TensorType::get()));
+        c10::ListType::create(c10::TensorType::get()));
   }
 #endif
   std::unique_lock<std::mutex> lock(mutex);
@@ -474,7 +499,7 @@ c10::intrusive_ptr<ProcessGroupUCC::WorkUCC> CommPG::enqueue_cuda_collective(
   st = ucc_collective_triggered_post(ee, &comp_ev);
   if (st != UCC_OK) {
     LOG(ERROR) << "failed to post triggered collective: "
-                << ucc_status_string(st);
+               << ucc_status_string(st);
     throw std::runtime_error(ucc_status_string(st));
   }
   st = ucc_ee_get_event(ee, &post_ev);
@@ -536,11 +561,8 @@ ProcessGroupUCC::ProcessGroupUCC(
     const c10::intrusive_ptr<Store>& store,
     int rank,
     int size)
-    : ProcessGroup(rank, size) {
+    : ProcessGroup(rank, size), store_(store) {
   std::call_once(torch_ucc_config.flag, read_confg);
-  oob.rank = rank;
-  oob.size = size;
-  oob.store = store;
   comm = nullptr;
   cuda_ee = nullptr;
 }
@@ -548,16 +570,10 @@ ProcessGroupUCC::ProcessGroupUCC(
 ProcessGroupUCC::~ProcessGroupUCC() {
   if (comm) {
     comm->ucc_destroy_team(team);
-    comm->ucx_disconnect_eps(eps, &oob);
     if (cuda_ee) {
       ucc_ee_destroy(cuda_ee);
     }
     comm = nullptr;
-    if ((size_t)oob.store->add(oob.getKey("ucc_pg_closed"), 1) == eps.size()) {
-      oob.store->add(oob.getKey("ucc_pg_finished"), 1);
-    } else {
-      oob.store->wait({oob.getKey("ucc_pg_finished")});
-    }
   }
 }
 
@@ -569,16 +585,16 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::collective_post(
     const char* prof_title) {
 #ifdef USE_CUDA
   if (dev.is_cuda()) {
-        std::unique_ptr<at::cuda::CUDAEvent> cuda_ev;
-        {
-            std::lock_guard<std::mutex> lock(ep.event_pool_mutex);
-            if (ep.event_pool.empty()) {
-            cuda_ev = std::make_unique<at::cuda::CUDAEvent>();
-            } else {
-                 cuda_ev = std::move(ep.event_pool.front());
-                ep.event_pool.pop();
-            }
-        }
+    std::unique_ptr<at::cuda::CUDAEvent> cuda_ev;
+    {
+      std::lock_guard<std::mutex> lock(ep.event_pool_mutex);
+      if (ep.event_pool.empty()) {
+        cuda_ev = std::make_unique<at::cuda::CUDAEvent>();
+      } else {
+        cuda_ev = std::move(ep.event_pool.front());
+        ep.event_pool.pop();
+      }
+    }
     cuda_ev->record(at::cuda::getCurrentCUDAStream(dev.index()));
     cuda_ev->block(*stream);
     c10::intrusive_ptr<ProcessGroupUCC::WorkUCC> work =
@@ -603,7 +619,7 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::collective_post(
     return work;
   }
 #endif // #ifdef USE_CUDA
-    return comm->enqueue_collective(
+  return comm->enqueue_collective(
       opType,
       coll,
       std::move(data),
@@ -666,8 +682,8 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::allreduce(
   WorkData* data = new WorkData();
 
   ucc_coll_args_t coll;
-  coll.mask = UCC_COLL_ARGS_FIELD_PREDEFINED_REDUCTIONS |
-              UCC_COLL_ARGS_FIELD_FLAGS;
+  coll.mask =
+      UCC_COLL_ARGS_FIELD_PREDEFINED_REDUCTIONS | UCC_COLL_ARGS_FIELD_FLAGS;
   coll.flags = UCC_COLL_ARGS_FLAG_IN_PLACE;
   coll.coll_type = UCC_COLL_TYPE_ALLREDUCE;
   coll.reduce.predefined_op = ucc_op_map.at(opts.reduceOp);
@@ -756,7 +772,7 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::alltoall_base(
     coll.dst.info_v.datatype = ucc_dtype_map.at(outputTensor.scalar_type());
     coll.dst.info_v.mem_type = ucc_mtype_map.at(outputTensor.device().type());
     coll.flags = UCC_COLL_ARGS_FLAG_CONTIG_SRC_BUFFER |
-                 UCC_COLL_ARGS_FLAG_CONTIG_DST_BUFFER;
+        UCC_COLL_ARGS_FLAG_CONTIG_DST_BUFFER;
   }
   std::vector<at::Tensor> inputTensors = {inputTensor};
   std::vector<at::Tensor> outputTensors = {outputTensor};
@@ -778,7 +794,8 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::barrier(
   ucc_coll_args_t coll;
   coll.mask = 0;
   coll.coll_type = UCC_COLL_TYPE_BARRIER;
-  return collective_post(OpType::BARRIER, coll, nullptr, c10::DeviceType::CPU, "ucc:barrier");
+  return collective_post(
+      OpType::BARRIER, coll, nullptr, c10::DeviceType::CPU, "ucc:barrier");
 }
 
 c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::broadcast(
@@ -906,9 +923,9 @@ void ProcessGroupUCC::initComm(c10::Device dev) {
       c10::cuda::set_device(dev.index());
     }
 #endif
-    comm = CommPG::get_comm(comm_id, dev, &oob);
-    comm->ucx_connect_eps(eps, &oob);
-    comm->ucc_create_team(team, &oob);
+    comm = CommPG::get_comm(comm_id, dev, rank_, size_, store_);
+    comm->ucx_get_eps(eps, size_);
+    comm->ucc_create_team(team);
   } else {
     if (dev.is_cuda()) {
       if ((comm->cuda_device_index != TORCH_UCC_DEVICE_NOT_SET) &&
