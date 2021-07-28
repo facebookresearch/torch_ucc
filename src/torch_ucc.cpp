@@ -157,15 +157,15 @@ bool ProcessGroupUCC::WorkUCC::wait(std::chrono::milliseconds /* unused */) {
 
 #ifdef USE_UCC_FUTURE
 void ProcessGroupUCC::WorkUCC::finishWorkUCCError(std::exception_ptr eptr) {
-  if (torch_ucc_config.use_future) {
+  if (torch_ucc_config.use_future && future_ && !future_->completed()) {
     future_->setError(eptr);
   }
   finish(eptr);
 }
 void ProcessGroupUCC::WorkUCC::finishWorkUCC() {
-  if (torch_ucc_config.use_future && future_) {
+  if (torch_ucc_config.use_future && future_ && !future_->completed()) {
     if (!data || data->dst.size() == 0) {
-      future_->markCompleted(c10::IValue(std::vector<at::Tensor>()));
+      // future_->markCompleted(c10::IValue(std::vector<at::Tensor>()));
     } else {
       future_->markCompleted(c10::IValue(data->dst));
     }
@@ -598,6 +598,7 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::collective_post(
       std::vector<c10::Device> devList{dev};
       work->future_ = c10::make_intrusive<at::ivalue::Future>(
           c10::ListType::create(c10::TensorType::get()), devList);
+      work->future_->markCompleted(c10::IValue(std::vector<at::Tensor>()));
     }
 #endif // #ifdef USE_UCC_FUTURE
     return work;
