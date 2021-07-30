@@ -128,38 +128,6 @@ class ProcessGroupUCC : public ProcessGroup {
     std::vector<uint64_t> recv_offsets;
   };
 
-  class WorkUCC : public ProcessGroup::Work {
-    friend class ProcessGroupUCC;
-    friend class CommPG;
-
-   public:
-    WorkUCC(
-        OpType opType,
-        ucc_status_t status,
-        const char* prof_title)
-        : ProcessGroup::Work(-1, opType, prof_title),
-          status_(status), early_future_complete(false) {}
-    ~WorkUCC();
-    bool isCompleted() override;
-    bool isSuccess() const override;
-    bool wait(std::chrono::milliseconds timeout = kUnsetTimeout) override;
-    void finishWorkUCC(
-      ucc_status_t status,
-      std::exception_ptr eptr,
-      std::vector<at::Tensor> output);
-    c10::intrusive_ptr<c10::ivalue::Future> getFuture() override;
-#ifdef USE_CUDA
-    std::unique_ptr<at::cuda::CUDAEvent> fence = nullptr;
-    event_pool_t* ep = nullptr;
-#endif
-   protected:
-    ucc_status_t status_;
-    bool early_future_complete;
-   private:
-    // The future returned by getFuture.
-    c10::intrusive_ptr<at::ivalue::Future> future_;
-  };
-
   class ProgressEntry {
     friend class ProcessGroupUCC;
     friend class CommPG;
@@ -167,16 +135,44 @@ class ProcessGroupUCC : public ProcessGroup {
   public:
     ProgressEntry(
         CommBase* comm,
-        ucc_coll_req_h request,
-        c10::intrusive_ptr<ProcessGroupUCC::WorkUCC> work)
-        : comm_(comm), request_(request), work_(work) {}
+        ucc_coll_req_h request)
+        : status_(UCC_INPROGRESS), comm_(comm), request_(request) {}
     void finalize(std::exception_ptr eptr = nullptr);
-
+    ucc_status_t status_;
     CommBase* comm_;
     ucc_coll_req_h request_;
     std::unique_ptr<WorkData> data;
-    c10::weak_intrusive_ptr<ProcessGroupUCC::WorkUCC> work_;
+    c10::intrusive_ptr<c10::ivalue::Future> future_;
+    std::exception_ptr eptr_;
   };
+
+  class WorkUCC : public ProcessGroup::Work {
+    friend class ProcessGroupUCC;
+    friend class CommPG;
+
+   public:
+    WorkUCC(
+        OpType opType,
+        const char* prof_title)
+        : ProcessGroup::Work(-1, opType, prof_title) {}
+    ~WorkUCC();
+    void setException();
+    void setAndThrowException();
+    bool isCompleted() override;
+    bool isSuccess() const override;
+    bool wait(std::chrono::milliseconds timeout = kUnsetTimeout) override;
+    c10::intrusive_ptr<c10::ivalue::Future> getFuture() override;
+#ifdef USE_CUDA
+    std::unique_ptr<at::cuda::CUDAEvent> fence = nullptr;
+    event_pool_t* ep = nullptr;
+#endif
+   protected:
+    std::shared_ptr<ProgressEntry> entry_;
+   private:
+    // The future returned by getFuture.
+    c10::intrusive_ptr<at::ivalue::Future> future_;
+  };
+
 
   explicit ProcessGroupUCC(
       const c10::intrusive_ptr<Store>& store,
@@ -305,6 +301,7 @@ class CommPG {
   std::condition_variable queue_consume_cv;
   std::deque<std::shared_ptr<ProcessGroupUCC::ProgressEntry>> progress_queue;
   bool stop_progress_loop;
+  bool collective_inprogress;
 
   void store_barrier();
 
