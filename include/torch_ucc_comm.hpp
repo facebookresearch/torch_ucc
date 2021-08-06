@@ -38,21 +38,16 @@
 
 namespace c10d {
 
-struct torch_ucc_oob_coll_info_ucx_t {
+struct torch_ucc_oob_coll_info_t {
+  c10::intrusive_ptr<Store> store;
   uint32_t comm_id;
   int rank;
   int size;
-  ucp_worker_h worker;
-  std::vector<ucp_ep_h> eps;
-  struct coll_req {
-    size_t msglen;
-    bool done;
-    int iter;
-    void* rbuf;
-    void* sbuf;
-    ucc_coll_req_h sendreq;
-    ucc_coll_req_h recvreq;
-  } req;
+  void* rbuf;
+  size_t msglen;
+  std::string getKey(std::string key) {
+    return std::to_string(comm_id)+key;
+  }
 };
 
 class CommBase {
@@ -79,13 +74,21 @@ class CommUCC : public CommBase {
   ucc_context_h context;
 
  public:
-  void create_context(torch_ucc_oob_coll_info_ucx_t* oob_info);
-  void destroy_context();
-  void create_team(ucc_team_h* team, torch_ucc_oob_coll_info_ucx_t* oob_info);
-  void destroy_team(ucc_team_h team);
   void progress() override;
-  CommUCC();
+  CommUCC(torch_ucc_oob_coll_info_t* oob_info);
   ~CommUCC();
 };
+
+ucc_status_t oob_allgather(
+    void* sbuf,
+    void* rbuf,
+    size_t msglen,
+    void* coll_info,
+    void** req);
+
+ucc_status_t oob_allgather_test(void* req);
+
+ucc_status_t oob_allgather_free(void* req);
+
 
 } // namespace c10d

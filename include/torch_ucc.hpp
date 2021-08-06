@@ -10,8 +10,8 @@
 
 #pragma once
 
-#include <torch/python.h>
 #include "torch_ucc_comm.hpp"
+#include <torch/python.h>
 
 #include <exception>
 #include <memory>
@@ -39,6 +39,11 @@ namespace c10d {
   ((((uint64_t)(_tag)) << TORCH_UCX_TAG_BITS_OFFSET) |   \
    (((uint64_t)(_rank)) << TORCH_UCX_RANK_BITS_OFFSET) | \
    (((uint64_t)(_comm)) << TORCH_UCX_COMM_BITS_OFFSET))
+
+#define TORCH_UCX_MAKE_OOB_TAG(_tag, _rank, _comm)       \
+  ((((uint64_t)(_tag)) << TORCH_UCX_OOB_BITS_OFFSET) |   \
+   (((uint64_t)(_rank)) << TORCH_UCX_RANK_BITS_OFFSET) | \
+   (((uint64_t)(_rank)) << TORCH_UCX_COMM_BITS_OFFSET))
 
 #define TORCH_UCX_MAKE_SEND_TAG(_ucp_tag, _tag, _rank, _comm)      \
   do {                                                             \
@@ -123,7 +128,9 @@ class ProcessGroupUCC : public ProcessGroup {
 
   class AllgatherWorkData : public WorkData {
    public:
-    AllgatherWorkData(int size) : recv_lengths(size), recv_offsets(size) {}
+    AllgatherWorkData(int size)
+      : recv_lengths(size),
+        recv_offsets(size) {}
     std::vector<uint64_t> recv_lengths;
     std::vector<uint64_t> recv_offsets;
   };
@@ -272,7 +279,7 @@ class ProcessGroupUCC : public ProcessGroup {
   }
 
  protected:
-  c10::intrusive_ptr<::c10d::Store> store_;
+  torch_ucc_oob_coll_info_t oob;
   std::shared_ptr<CommPG> comm;
   uint32_t comm_id;
   std::vector<ucp_ep_h> eps;
@@ -285,10 +292,7 @@ class ProcessGroupUCC : public ProcessGroup {
 };
 
 class CommPG {
-  c10::intrusive_ptr<Store> store;
   CommUCX ucx_comm;
-  std::vector<ucp_ep_h> eps;
-  torch_ucc_oob_coll_info_ucx_t ucx_oob;
   CommUCC ucc_comm;
   c10::DeviceIndex device_index;
   std::mutex mutex;
@@ -298,34 +302,24 @@ class CommPG {
   std::deque<c10::intrusive_ptr<ProcessGroupUCC::WorkUCC>> progress_queue;
   bool stop_progress_loop;
 
-  void store_barrier();
-
-  void ucx_connect_eps(
-      std::vector<ucp_ep_h>& eps,
-      int rank,
-      int size,
-      c10::intrusive_ptr<Store> store);
-
-  void ucx_disconnect_eps(
-      std::vector<ucp_ep_h>& eps,
-      int rank,
-      int size,
-      c10::intrusive_ptr<Store> store);
-
  public:
   c10::DeviceIndex cuda_device_index;
-  CommPG(
-      uint32_t comm_id,
-      int rank,
-      int size,
-      c10::intrusive_ptr<Store> str,
+  CommPG(torch_ucc_oob_coll_info_t* oob_info,
       c10::Device dev);
 
   ~CommPG();
 
-  void ucx_get_eps(std::vector<ucp_ep_h>& ucx_eps, int size);
+  void ucx_connect_eps(
+      std::vector<ucp_ep_h>& eps,
+      torch_ucc_oob_coll_info_t* oob);
 
-  void ucc_create_team(ucc_team_h& team);
+  void ucx_disconnect_eps(
+      std::vector<ucp_ep_h>& eps,
+      torch_ucc_oob_coll_info_t* oob);
+
+  void ucc_create_team(
+      ucc_team_h& team,
+      torch_ucc_oob_coll_info_t* oob_info);
 
   void ucc_destroy_team(ucc_team_h& team);
 
@@ -357,9 +351,7 @@ class CommPG {
   static std::shared_ptr<CommPG> get_comm(
       uint32_t& id,
       c10::Device dev,
-      int rank,
-      int size,
-      c10::intrusive_ptr<Store> store);
+      torch_ucc_oob_coll_info_t *oob);
 
   void progress_loop();
 
