@@ -56,6 +56,11 @@ void CommUCX::progress() {
   ucp_worker_progress(worker);
 }
 
+void CommUCX::free_request(ucc_coll_req_h request) {
+  request->status = UCC_INPROGRESS;
+  ucp_request_free(request);
+}
+
 CommUCX::~CommUCX() {
   ucp_worker_destroy(worker);
   ucp_cleanup(context);
@@ -191,6 +196,10 @@ CommUCC::CommUCC(torch_ucc_oob_coll_info_t* oob_info) {
 
 void CommUCC::progress() {
   ucc_context_progress(context);
+}
+
+void CommUCC::free_request(ucc_coll_req_h request) {
+  ucc_collective_finalize(request);
 }
 
 CommUCC::~CommUCC() {
