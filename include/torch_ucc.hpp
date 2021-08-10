@@ -135,6 +135,24 @@ class ProcessGroupUCC : public ProcessGroup {
     std::vector<uint64_t> recv_offsets;
   };
 
+  class ProgressEntry {
+    friend class ProcessGroupUCC;
+    friend class CommPG;
+
+  public:
+    ProgressEntry(
+        CommBase* comm,
+        ucc_coll_req_h request)
+        : status_(UCC_INPROGRESS), comm_(comm), request_(request) {}
+    void finalize(std::exception_ptr eptr = nullptr);
+    ucc_status_t status_;
+    CommBase* comm_;
+    ucc_coll_req_h request_;
+    std::unique_ptr<WorkData> data;
+    c10::intrusive_ptr<c10::ivalue::Future> future_;
+    std::exception_ptr eptr_;
+  };
+
   class WorkUCC : public ProcessGroup::Work {
     friend class ProcessGroupUCC;
     friend class CommPG;
@@ -142,41 +160,26 @@ class ProcessGroupUCC : public ProcessGroup {
    public:
     WorkUCC(
         OpType opType,
-        ucc_status_t status,
-        ucc_coll_req_h request,
-        ucc_ee_h ee,
-        CommBase* comm,
         const char* prof_title)
-        : ProcessGroup::Work(-1, opType, prof_title),
-          status_(status),
-          request_(request),
-          comm_(comm) {}
+        : ProcessGroup::Work(-1, opType, prof_title) {}
     ~WorkUCC();
+    void setException();
+    void setAndThrowException();
     bool isCompleted() override;
     bool isSuccess() const override;
     bool wait(std::chrono::milliseconds timeout = kUnsetTimeout) override;
-    void finalize();
-    std::unique_ptr<WorkData> data;
-#ifdef USE_UCC_FUTURE
-    void finishWorkUCC();
-    void finishWorkUCCError(std::exception_ptr eptr);
     c10::intrusive_ptr<c10::ivalue::Future> getFuture() override;
-#endif
 #ifdef USE_CUDA
     std::unique_ptr<at::cuda::CUDAEvent> fence = nullptr;
     event_pool_t* ep = nullptr;
 #endif
    protected:
-    ucc_status_t status_;
-    ucc_coll_req_h request_;
-    CommBase* comm_;
-
-#ifdef USE_UCC_FUTURE
+    std::shared_ptr<ProgressEntry> entry_;
    private:
     // The future returned by getFuture.
     c10::intrusive_ptr<at::ivalue::Future> future_;
-#endif
   };
+
 
   explicit ProcessGroupUCC(
       const c10::intrusive_ptr<Store>& store,
@@ -192,6 +195,7 @@ class ProcessGroupUCC : public ProcessGroup {
       ucc_coll_args_t& coll,
       std::unique_ptr<ProcessGroupUCC::WorkData> data,
       c10::Device dev,
+      std::vector<at::Tensor> &outputTensors,
       const char* prof_title);
 
   c10::intrusive_ptr<ProcessGroup::Work> broadcast(
@@ -299,8 +303,9 @@ class CommPG {
   std::thread progress_thread;
   std::condition_variable queue_produce_cv;
   std::condition_variable queue_consume_cv;
-  std::deque<c10::intrusive_ptr<ProcessGroupUCC::WorkUCC>> progress_queue;
+  std::deque<std::shared_ptr<ProcessGroupUCC::ProgressEntry>> progress_queue;
   bool stop_progress_loop;
+  bool collective_inprogress;
 
  public:
   c10::DeviceIndex cuda_device_index;
@@ -329,24 +334,19 @@ class CommPG {
       const char* prof_title);
 
 #ifdef USE_CUDA
-  c10::intrusive_ptr<ProcessGroupUCC::WorkUCC> enqueue_cuda_collective(
-      OpType opType,
-      ucc_coll_args_t& coll,
+  void enqueue_cuda_collective(
       std::unique_ptr<ProcessGroupUCC::WorkData> data,
-      ucc_team_h& team,
-      ucc_ee_h ee,
-      std::unique_ptr<at::cuda::CUDAEvent> cuda_ev,
-      const at::cuda::CUDAStream& stream,
-      event_pool_t* ep,
-      const char* prof_title);
+      c10::intrusive_ptr<ProcessGroupUCC::WorkUCC> work,
+      ucc_coll_args_t& coll,
+      ucc_team_h team,
+      ucc_ee_h ee);
 #endif
 
-  c10::intrusive_ptr<ProcessGroupUCC::WorkUCC> enqueue_collective(
-      OpType opType,
-      ucc_coll_args_t& coll,
+  void enqueue_collective(
       std::unique_ptr<ProcessGroupUCC::WorkData> data,
-      ucc_team_h& team,
-      const char* prof_title);
+      c10::intrusive_ptr<ProcessGroupUCC::WorkUCC> work,
+      ucc_coll_args_t& coll,
+      ucc_team_h team);
 
   static std::shared_ptr<CommPG> get_comm(
       uint32_t& id,

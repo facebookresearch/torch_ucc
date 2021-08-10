@@ -59,9 +59,7 @@ struct torch_ucc_config_t {
   std::once_flag flag;
   std::array<bool, 32> blocking_wait;
   bool enable_profiling;
-#ifdef USE_UCC_FUTURE
   bool use_future;
-#endif
 } torch_ucc_config;
 
 void read_confg() {
@@ -88,14 +86,12 @@ void read_confg() {
     torch_ucc_config.blocking_wait[(std::uint8_t)OpType::BROADCAST] =
         std::atoi(env);
   }
-#ifdef USE_UCC_FUTURE
   env = std::getenv("TORCH_UCC_USE_FUTURE");
   if (env) {
     torch_ucc_config.use_future = !!std::atoi(env);
   } else {
     torch_ucc_config.use_future = true;
   }
-#endif
   torch_ucc_config.enable_profiling = false;
   env = std::getenv("TORCH_UCC_PROFILING_ENABLE");
   if (env) {
@@ -124,7 +120,6 @@ void check_tensor(const std::vector<at::Tensor>& tensors) {
 }
 
 ProcessGroupUCC::WorkUCC::~WorkUCC() {
-  TORCH_CHECK(request_ == nullptr, "TorchUCC, request wasn't finalized");
 #ifdef USE_CUDA
     if (fence && ep) {
         std::lock_guard<std::mutex> lock(ep->event_pool_mutex);
@@ -133,18 +128,34 @@ ProcessGroupUCC::WorkUCC::~WorkUCC() {
 #endif
 }
 
+void ProcessGroupUCC::WorkUCC::setException() {
+  if (exception()) {
+    return;
+  }
+  exception_ = entry_->eptr_;
+}
+
+void ProcessGroupUCC::WorkUCC::setAndThrowException() {
+  setException();
+  if (exception()) {
+    std::rethrow_exception(exception());
+  }
+}
+
 bool ProcessGroupUCC::WorkUCC::isCompleted() {
-  return ((status_ == UCC_OK) || (status_ < 0));
+  setException();
+  return exception() || entry_->status_ <= 0;
 }
 
 bool ProcessGroupUCC::WorkUCC::isSuccess() const {
-  return (status_ >= 0);
+  return !exception() && entry_->status_ == 0;
 }
 
 bool ProcessGroupUCC::WorkUCC::wait(std::chrono::milliseconds /* unused */) {
 #ifdef USE_CUDA
   if (fence && !torch_ucc_config.blocking_wait[(int)opType_]) {
     // block user stream
+    setAndThrowException();
     fence->block(at::cuda::getCurrentCUDAStream());
     return true;
   }
@@ -152,47 +163,34 @@ bool ProcessGroupUCC::WorkUCC::wait(std::chrono::milliseconds /* unused */) {
   // wait for complete
   while (!isCompleted())
     ;
+  setAndThrowException();
+  // manually call profiling end callbacks if they are set,
+  // since progress thread does not own WorkUCC
+  if (ProcessGroup::Work::recordFunctionEndCallback_) {
+    ProcessGroup::Work::recordFunctionEndCallback_();
+    ProcessGroup::Work::recordFunctionEndCallback_ = nullptr;
+  }
   return true;
 }
 
-#ifdef USE_UCC_FUTURE
-void ProcessGroupUCC::WorkUCC::finishWorkUCCError(std::exception_ptr eptr) {
-  if (torch_ucc_config.use_future) {
-    future_->setError(eptr);
-  }
-  finish(eptr);
-}
-void ProcessGroupUCC::WorkUCC::finishWorkUCC() {
-  if (torch_ucc_config.use_future && future_) {
-    if (!data || data->dst.size() == 0) {
-      future_->markCompleted(c10::IValue(std::vector<at::Tensor>()));
-    } else {
-      future_->markCompleted(c10::IValue(data->dst));
-    }
-  }
-  finish();
-}
-
-c10::intrusive_ptr<c10::ivalue::Future> ProcessGroupUCC::WorkUCC::
-    getFuture() {
+c10::intrusive_ptr<c10::ivalue::Future> ProcessGroupUCC::WorkUCC::getFuture() {
   return future_;
 }
-#endif // #ifdef USE_UCC_FUTURE
 
-void ProcessGroupUCC::WorkUCC::finalize() {
-  if (request_ != nullptr) {
-    if (isP2POp(opType_)) {
-      request_->status = UCC_INPROGRESS;
-      ucp_request_free(request_);
+void ProcessGroupUCC::ProgressEntry::finalize(std::exception_ptr eptr) {
+  ucc_status_t status;
+  status = request_->status;
+  comm_->free_request(request_);
+  status_ = status;
+  eptr_ = eptr;
+  if (future_) {
+    if (eptr) {
+      future_->setError(eptr);
     } else {
-      ucc_collective_finalize(request_);
+      future_->markCompleted(
+          c10::IValue(data ? data->dst : std::vector<at::Tensor>()));
     }
-    status_ = UCC_OK;
-    request_ = nullptr;
   }
-#ifdef USE_UCC_FUTURE
-  finishWorkUCC();
-#endif
 }
 
 CommPG::CommPG(torch_ucc_oob_coll_info_t* oob_info,
@@ -204,13 +202,15 @@ CommPG::CommPG(torch_ucc_oob_coll_info_t* oob_info,
     cuda_device_index = dev.index();
   }
   stop_progress_loop = false;
+  collective_inprogress = false;
   progress_thread = std::thread(&CommPG::progress_loop, this);
   pthread_setname_np(progress_thread.native_handle(), "ucc-progress");
 }
 
 CommPG::~CommPG() {
   std::unique_lock<std::mutex> lock(mutex);
-  queue_consume_cv.wait(lock, [&] { return progress_queue.empty(); });
+  queue_consume_cv.wait(lock, [&] {
+        return progress_queue.empty() && !collective_inprogress; });
   stop_progress_loop = true;
   lock.unlock();
   queue_produce_cv.notify_all();
@@ -387,6 +387,10 @@ void CommPG::ucc_create_team(
 }
 
 void CommPG::ucc_destroy_team(ucc_team_h& team) {
+  std::unique_lock<std::mutex> lock(mutex);
+  queue_consume_cv.wait(lock, [&] {
+        return progress_queue.empty() && !collective_inprogress; });
+
   ucc_status_t status;
   while (UCC_INPROGRESS == (status = ucc_team_destroy(team))) {
     if (UCC_OK != status) {
@@ -394,6 +398,8 @@ void CommPG::ucc_destroy_team(ucc_team_h& team) {
       break;
     }
   }
+
+  lock.unlock();
 }
 
 c10::intrusive_ptr<ProcessGroup::Work> CommPG::enqueue_p2p(
@@ -403,23 +409,24 @@ c10::intrusive_ptr<ProcessGroup::Work> CommPG::enqueue_p2p(
   if (request == nullptr) {
     // p2p2 request completed immediately don't save it to progress queue
     return c10::make_intrusive<ProcessGroupUCC::WorkUCC>(
-        opType, UCC_OK, request, nullptr, &ucx_comm, prof_title);
+        opType, prof_title);
   }
   auto work = c10::make_intrusive<ProcessGroupUCC::WorkUCC>(
-      opType, UCC_INPROGRESS, request, nullptr, &ucx_comm, prof_title);
+      opType, prof_title);
+  auto entry = std::make_shared<ProcessGroupUCC::ProgressEntry>(
+      &ucx_comm, request);
   std::unique_lock<std::mutex> lock(mutex);
-  progress_queue.push_back(work);
+  progress_queue.push_back(entry);
   lock.unlock();
   queue_produce_cv.notify_one();
   return work;
 }
 
-c10::intrusive_ptr<ProcessGroupUCC::WorkUCC> CommPG::enqueue_collective(
-    OpType opType,
-    ucc_coll_args_t& coll,
+void CommPG::enqueue_collective(
     std::unique_ptr<ProcessGroupUCC::WorkData> data,
-    ucc_team_h& team,
-    const char* prof_title) {
+    c10::intrusive_ptr<ProcessGroupUCC::WorkUCC> work,
+    ucc_coll_args_t& coll,
+    ucc_team_h team) {
   ucc_coll_req_h request;
   ucc_status_t st;
   st = ucc_collective_init(&coll, &request, team);
@@ -432,33 +439,24 @@ c10::intrusive_ptr<ProcessGroupUCC::WorkUCC> CommPG::enqueue_collective(
     LOG(ERROR) << "failed to post collective: " << ucc_status_string(st);
     throw std::runtime_error(ucc_status_string(st));
   }
-  auto work = c10::make_intrusive<ProcessGroupUCC::WorkUCC>(
-      opType, UCC_INPROGRESS, request, nullptr, &ucc_comm, prof_title);
-  work->data = std::move(data);
-#ifdef USE_UCC_FUTURE
-  if (torch_ucc_config.use_future) {
-    work->future_ = c10::make_intrusive<at::ivalue::Future>(
-          c10::ListType::create(c10::TensorType::get()));
-  }
-#endif
+  auto entry = std::make_shared<ProcessGroupUCC::ProgressEntry>(
+      &ucc_comm, request);
+  entry->data = std::move(data);
+  entry->future_ = work->getFuture();
+  work->entry_ = entry;
   std::unique_lock<std::mutex> lock(mutex);
-  progress_queue.push_back(work);
+  progress_queue.push_back(entry);
   lock.unlock();
   queue_produce_cv.notify_one();
-  return work;
 }
 
 #ifdef USE_CUDA
-c10::intrusive_ptr<ProcessGroupUCC::WorkUCC> CommPG::enqueue_cuda_collective(
-    OpType opType,
-    ucc_coll_args_t& coll,
+void CommPG::enqueue_cuda_collective(
     std::unique_ptr<ProcessGroupUCC::WorkData> data,
-    ucc_team_h& team,
-    ucc_ee_h ee,
-    std::unique_ptr<at::cuda::CUDAEvent> cuda_ev,
-    const at::cuda::CUDAStream& stream,
-    event_pool_t* ep,
-    const char* prof_title) {
+    c10::intrusive_ptr<ProcessGroupUCC::WorkUCC> work,
+    ucc_coll_args_t& coll,
+    ucc_team_h team,
+    ucc_ee_h ee) {
   ucc_coll_req_h request;
   ucc_status_t st;
   st = ucc_collective_init(&coll, &request, team);
@@ -480,17 +478,14 @@ c10::intrusive_ptr<ProcessGroupUCC::WorkUCC> CommPG::enqueue_cuda_collective(
   st = ucc_ee_get_event(ee, &post_ev);
   TORCH_CHECK(st == UCC_OK && post_ev->ev_type == UCC_EVENT_COLLECTIVE_POST);
   ucc_ee_ack_event(ee, post_ev);
-  auto work = c10::make_intrusive<ProcessGroupUCC::WorkUCC>(
-      opType, UCC_INPROGRESS, request, ee, &ucc_comm, prof_title);
-  work->data = std::move(data);
-  work->ep = ep;
-  cuda_ev->record(stream);
-  work->fence = std::move(cuda_ev);
+  auto entry = std::make_shared<ProcessGroupUCC::ProgressEntry>(
+      &ucc_comm, request);
+  entry->data = std::move(data);
+  work->entry_ = entry;
   std::unique_lock<std::mutex> lock(mutex);
-  progress_queue.push_back(work);
+  progress_queue.push_back(entry);
   lock.unlock();
   queue_produce_cv.notify_one();
-  return work;
 }
 #endif
 
@@ -504,30 +499,32 @@ void CommPG::progress_loop() {
       queue_produce_cv.wait(lock);
       continue;
     }
+    collective_inprogress = true;
     auto work = progress_queue.front();
     progress_queue.pop_front();
     lock.unlock();
-    queue_consume_cv.notify_one();
 #ifdef USE_CUDA
     if ((!device_set) && (cuda_device_index != TORCH_UCC_DEVICE_NOT_SET)) {
       c10::cuda::set_device(cuda_device_index);
       device_set = true;
     }
 #endif
+    std::exception_ptr eptr;
     try {
       while (work->request_->status > 0) {
-        // operation initialized is in progress or
         work->comm_->progress();
       }
-      work->finalize();
-      work->data.reset();
+      if (work->request_->status < 0) {
+        eptr = std::make_exception_ptr(
+            std::runtime_error(ucc_status_string(work->request_->status)));
+      }
     } catch (...) {
-#ifdef USE_UCC_FUTURE
-      work->finishWorkUCCError(std::current_exception());
-#else
-      work->finish(std::current_exception());
-#endif
+      eptr = std::current_exception();
     }
+    work->finalize(eptr);
+    work = nullptr;
+    collective_inprogress = false;
+    queue_consume_cv.notify_one();
     lock.lock();
   }
 }
@@ -566,49 +563,60 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::collective_post(
     ucc_coll_args_t& coll,
     std::unique_ptr<ProcessGroupUCC::WorkData> data,
     c10::Device dev,
+    std::vector<at::Tensor> &outputTensors,
     const char* prof_title) {
-#ifdef USE_CUDA
-  if (dev.is_cuda()) {
-        std::unique_ptr<at::cuda::CUDAEvent> cuda_ev;
-        {
-            std::lock_guard<std::mutex> lock(ep.event_pool_mutex);
-            if (ep.event_pool.empty()) {
-            cuda_ev = std::make_unique<at::cuda::CUDAEvent>();
-            } else {
-                 cuda_ev = std::move(ep.event_pool.front());
-                ep.event_pool.pop();
-            }
-        }
-    cuda_ev->record(at::cuda::getCurrentCUDAStream(dev.index()));
-    cuda_ev->block(*stream);
-    c10::intrusive_ptr<ProcessGroupUCC::WorkUCC> work =
-        comm->enqueue_cuda_collective(
-            opType,
-            coll,
-            std::move(data),
-            team,
-            cuda_ee,
-            std::move(cuda_ev),
-            *stream,
-            &ep,
-            (torch_ucc_config.enable_profiling) ? prof_title : nullptr);
-#ifdef USE_UCC_FUTURE
-    if (torch_ucc_config.use_future) {
-      c10::cuda::CUDAMultiStreamGuard streamGuard(*stream);
-      std::vector<c10::Device> devList{dev};
-      work->future_ = c10::make_intrusive<at::ivalue::Future>(
-          c10::ListType::create(c10::TensorType::get()), devList);
+  auto work =
+      c10::make_intrusive<ProcessGroupUCC::WorkUCC>(
+          opType, torch_ucc_config.enable_profiling ? prof_title : nullptr);
+
+  switch (dev.type()) {
+    case c10::DeviceType::CPU: {
+      if (torch_ucc_config.use_future) {
+        work->future_ = c10::make_intrusive<at::ivalue::Future>(
+            c10::ListType::create(c10::TensorType::get()));
+      }
+      comm->enqueue_collective(std::move(data), work, coll, team);
+      return work;
     }
-#endif // #ifdef USE_UCC_FUTURE
-    return work;
-  }
+#ifdef USE_CUDA
+    case c10::DeviceType::CUDA: {
+      std::unique_ptr<at::cuda::CUDAEvent> cuda_ev;
+      {
+        std::lock_guard<std::mutex> lock(ep.event_pool_mutex);
+        if (ep.event_pool.empty()) {
+          cuda_ev = std::make_unique<at::cuda::CUDAEvent>();
+        } else {
+          cuda_ev = std::move(ep.event_pool.front());
+          ep.event_pool.pop();
+        }
+      }
+      cuda_ev->record(at::cuda::getCurrentCUDAStream(dev.index()));
+      cuda_ev->block(*stream);
+      comm->enqueue_cuda_collective(std::move(data), work, coll, team, cuda_ee);
+      cuda_ev->record(*stream);
+      work->fence = std::move(cuda_ev);
+      work->ep = &ep;
+      if (torch_ucc_config.use_future) {
+        c10::cuda::CUDAMultiStreamGuard streamGuard(*stream);
+        std::vector<c10::Device> devList{dev};
+        work->future_ = c10::make_intrusive<at::ivalue::Future>(
+            c10::ListType::create(c10::TensorType::get()), devList);
+        // Add a callback that runs profiling end callbacks
+        if (work->recordFunctionEndCallback_) {
+          work->future_->addCallback(
+          [work](at::ivalue::Future& /* unused */) { work->recordFunctionEndCallback_(); });
+        }
+
+        work->future_->markCompleted(c10::IValue(outputTensors));
+      }
+      return work;
+    }
 #endif // #ifdef USE_CUDA
-    return comm->enqueue_collective(
-      opType,
-      coll,
-      std::move(data),
-      team,
-      (torch_ucc_config.enable_profiling) ? prof_title : nullptr);
+    default: {
+      LOG(ERROR) << "unsupported device type " << dev;
+      throw std::runtime_error(ucc_status_string(UCC_ERR_NOT_SUPPORTED));
+    }
+  }
 }
 
 c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::allgather(
@@ -647,6 +655,7 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::allgather(
       coll,
       std::unique_ptr<WorkData>(data),
       tensor.device(),
+      outputTensors[0],
       "ucc:allgather");
 }
 
@@ -680,12 +689,12 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::allreduce(
   coll.dst.info.datatype = ucc_dtype_map.at(tensor.scalar_type());
   coll.dst.info.mem_type = ucc_mtype_map.at(tensor.device().type());
   SAVE_TENSORS(tensors, data->dst);
-
   return collective_post(
       OpType::ALLREDUCE,
       coll,
       std::unique_ptr<WorkData>(data),
       tensor.device(),
+      tensors,
       "ucc:allreduce");
 }
 
@@ -768,6 +777,7 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::alltoall_base(
       coll,
       std::unique_ptr<WorkData>(data),
       inputTensor.device(),
+      outputTensors,
       "ucc:alltoall");
 }
 
@@ -778,7 +788,9 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::barrier(
   ucc_coll_args_t coll;
   coll.mask = 0;
   coll.coll_type = UCC_COLL_TYPE_BARRIER;
-  return collective_post(OpType::BARRIER, coll, nullptr, c10::DeviceType::CPU, "ucc:barrier");
+  auto dummy_tensor = std::vector<at::Tensor>();
+  return collective_post(
+      OpType::BARRIER, coll, nullptr, c10::DeviceType::CPU, dummy_tensor, "ucc:barrier");
 }
 
 c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::broadcast(
@@ -804,6 +816,7 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::broadcast(
       coll,
       std::unique_ptr<WorkData>(data),
       tensor.device(),
+      tensors,
       "ucc:broadcast");
 }
 

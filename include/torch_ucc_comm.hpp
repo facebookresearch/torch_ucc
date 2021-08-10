@@ -54,6 +54,7 @@ class CommBase {
  public:
   CommBase() {}
   virtual void progress() = 0;
+  virtual void free_request(ucc_coll_req_h request) = 0;
   virtual ~CommBase() {}
 };
 
@@ -64,6 +65,7 @@ class CommUCX : public CommBase {
 
  public:
   void progress() override;
+  void free_request(ucc_coll_req_h request) override;
   CommUCX(int comm_size);
   ~CommUCX();
 };
@@ -76,6 +78,7 @@ class CommUCC : public CommBase {
  public:
   void progress() override;
   CommUCC(torch_ucc_oob_coll_info_t* oob_info);
+  void free_request(ucc_coll_req_h request) override;
   ~CommUCC();
 };
 
