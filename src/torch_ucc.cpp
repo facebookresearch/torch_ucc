@@ -733,12 +733,12 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::alltoall_base(
     coll.coll_type = UCC_COLL_TYPE_ALLTOALL;
     coll.src.info.buffer = inputTensor.data_ptr();
     coll.src.info.count =
-        inputTensor.element_size() * inputTensor.numel() / size_;
+        inputTensor.element_size() * inputTensor.numel();
     coll.src.info.datatype = UCC_DT_UINT8;
     coll.src.info.mem_type = ucc_mtype_map.at(inputTensor.device().type());
     coll.dst.info.buffer = outputTensor.data_ptr();
     coll.dst.info.count =
-        outputTensor.element_size() * outputTensor.numel() / size_;
+        outputTensor.element_size() * outputTensor.numel();
     coll.dst.info.datatype = UCC_DT_UINT8;
     coll.dst.info.mem_type = ucc_mtype_map.at(outputTensor.device().type());
   } else {
