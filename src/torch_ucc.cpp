@@ -17,23 +17,27 @@ const std::map<c10::DeviceType, ucs_memory_type_t> ucs_mtype_map = {
     {c10::kCPU, UCS_MEMORY_TYPE_HOST},
     {c10::kCUDA, UCS_MEMORY_TYPE_CUDA},
     {c10::kHIP, UCS_MEMORY_TYPE_ROCM},
-    {c10::kFPGA, UCS_MEMORY_TYPE_UNKNOWN},
-    {c10::kORT, UCS_MEMORY_TYPE_UNKNOWN},
-    {c10::kXLA, UCS_MEMORY_TYPE_UNKNOWN},
-    {c10::kVulkan, UCS_MEMORY_TYPE_UNKNOWN},
-    {c10::kMetal, UCS_MEMORY_TYPE_UNKNOWN},
 };
+
+ucs_memory_type_t to_ucs_memType(c10::DeviceType _c10_type) {
+  if (ucs_mtype_map.find(_c10_type) != ucs_mtype_map.end())
+    return ucs_mtype_map.at(_c10_type);
+  else
+    return UCS_MEMORY_TYPE_UNKNOWN;
+}
 
 const std::map<c10::DeviceType, ucc_memory_type_t> ucc_mtype_map = {
     {c10::kCPU, UCC_MEMORY_TYPE_HOST},
     {c10::kCUDA, UCC_MEMORY_TYPE_CUDA},
     {c10::kHIP, UCC_MEMORY_TYPE_ROCM},
-    {c10::kFPGA, UCC_MEMORY_TYPE_UNKNOWN},
-    {c10::kORT, UCC_MEMORY_TYPE_UNKNOWN},
-    {c10::kXLA, UCC_MEMORY_TYPE_UNKNOWN},
-    {c10::kVulkan, UCC_MEMORY_TYPE_UNKNOWN},
-    {c10::kMetal, UCC_MEMORY_TYPE_UNKNOWN},
 };
+
+ucc_memory_type_t to_ucc_memType(c10::DeviceType _c10_type) {
+  if (ucc_mtype_map.find(_c10_type) != ucc_mtype_map.end())
+    return ucc_mtype_map.at(_c10_type);
+  else
+    return UCC_MEMORY_TYPE_UNKNOWN;
+}
 
 const std::map<at::ScalarType, ucc_datatype_t> ucc_dtype_map = {
     {at::kByte, UCC_DT_UINT8},
@@ -640,13 +644,13 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::allgather(
   coll.src.info.buffer = tensor.data_ptr();
   coll.src.info.count = tensor.element_size() * tensor.numel();
   coll.src.info.datatype = UCC_DT_UINT8;
-  coll.src.info.mem_type = ucc_mtype_map.at(tensor.device().type());
+  coll.src.info.mem_type = to_ucc_memType(tensor.device().type());
   coll.dst.info_v.buffer = nullptr;
   coll.dst.info_v.counts = (ucc_count_t*)data->recv_lengths.data();
   coll.dst.info_v.displacements = (ucc_aint_t*)data->recv_offsets.data();
   coll.dst.info_v.datatype = UCC_DT_UINT8;
   coll.dst.info_v.mem_type =
-      ucc_mtype_map.at(outputTensors[0][0].device().type());
+      to_ucc_memType(outputTensors[0][0].device().type());
   SAVE_TENSORS(inputTensors, data->src);
   SAVE_TENSORS(outputTensors[0], data->dst);
 
@@ -683,11 +687,11 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::allreduce(
   coll.src.info.buffer = nullptr;
   coll.src.info.count = tensor.numel();
   coll.src.info.datatype = ucc_dtype_map.at(tensor.scalar_type());
-  coll.src.info.mem_type = ucc_mtype_map.at(tensor.device().type());
+  coll.src.info.mem_type = to_ucc_memType(tensor.device().type());
   coll.dst.info.buffer = tensor.data_ptr();
   coll.dst.info.count = tensor.numel();
   coll.dst.info.datatype = ucc_dtype_map.at(tensor.scalar_type());
-  coll.dst.info.mem_type = ucc_mtype_map.at(tensor.device().type());
+  coll.dst.info.mem_type = to_ucc_memType(tensor.device().type());
   SAVE_TENSORS(tensors, data->dst);
   return collective_post(
       OpType::ALLREDUCE,
@@ -735,12 +739,12 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::alltoall_base(
     coll.src.info.count =
         inputTensor.element_size() * inputTensor.numel();
     coll.src.info.datatype = UCC_DT_UINT8;
-    coll.src.info.mem_type = ucc_mtype_map.at(inputTensor.device().type());
+    coll.src.info.mem_type = to_ucc_memType(inputTensor.device().type());
     coll.dst.info.buffer = outputTensor.data_ptr();
     coll.dst.info.count =
         outputTensor.element_size() * outputTensor.numel();
     coll.dst.info.datatype = UCC_DT_UINT8;
-    coll.dst.info.mem_type = ucc_mtype_map.at(outputTensor.device().type());
+    coll.dst.info.mem_type = to_ucc_memType(outputTensor.device().type());
   } else {
     data = new AlltoallWorkData(size_);
     c10d::checkSplitSizes(inputSplitSizes, inputTensor, size_);
@@ -758,12 +762,12 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::alltoall_base(
     coll.src.info_v.counts = (ucc_count_t*)data->send_lengths.data();
     coll.src.info_v.displacements = (ucc_aint_t*)data->send_offsets.data();
     coll.src.info_v.datatype = ucc_dtype_map.at(inputTensor.scalar_type());
-    coll.src.info_v.mem_type = ucc_mtype_map.at(inputTensor.device().type());
+    coll.src.info_v.mem_type = to_ucc_memType(inputTensor.device().type());
     coll.dst.info_v.buffer = outputTensor.data_ptr();
     coll.dst.info_v.counts = (ucc_count_t*)data->recv_lengths.data();
     coll.dst.info_v.displacements = (ucc_aint_t*)data->recv_offsets.data();
     coll.dst.info_v.datatype = ucc_dtype_map.at(outputTensor.scalar_type());
-    coll.dst.info_v.mem_type = ucc_mtype_map.at(outputTensor.device().type());
+    coll.dst.info_v.mem_type = to_ucc_memType(outputTensor.device().type());
     coll.flags = UCC_COLL_ARGS_FLAG_CONTIG_SRC_BUFFER |
                  UCC_COLL_ARGS_FLAG_CONTIG_DST_BUFFER;
   }
@@ -807,7 +811,7 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::broadcast(
   coll.src.info.buffer = tensor.data_ptr();
   coll.src.info.count = tensor.numel();
   coll.src.info.datatype = ucc_dtype_map.at(tensor.scalar_type());
-  coll.src.info.mem_type = ucc_mtype_map.at(tensor.device().type());
+  coll.src.info.mem_type = to_ucc_memType(tensor.device().type());
   coll.root = opts.rootRank;
   SAVE_TENSORS(tensors, data->dst);
 
@@ -860,7 +864,7 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::send(
   ucc_coll_req_h request = comm->send_nb(
       eps[dstRank],
       tensor.data_ptr(),
-      ucs_mtype_map.at(tensor.device().type()),
+      to_ucs_memType(tensor.device().type()),
       tensor.numel() * tensor.element_size(),
       ucp_tag);
   return comm->enqueue_p2p(OpType::SEND, request, "ucc:send");
@@ -878,7 +882,7 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::recv(
   TORCH_UCX_MAKE_RECV_TAG(ucp_tag, ucp_tag_mask, tag, srcRank, comm_id);
   ucc_coll_req_h request = comm->recv_nb(
       tensor.data_ptr(),
-      ucs_mtype_map.at(tensor.device().type()),
+      to_ucs_memType(tensor.device().type()),
       tensor.numel() * tensor.element_size(),
       ucp_tag,
       ucp_tag_mask);
@@ -897,7 +901,7 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::recvAnysource(
       ucp_tag, ucp_tag_mask, tag, TORCH_UCX_ANY_SOURCE, comm_id);
   ucc_coll_req_h request = comm->recv_nb(
       tensor.data_ptr(),
-      ucs_mtype_map.at(tensor.device().type()),
+      to_ucs_memType(tensor.device().type()),
       tensor.numel() * tensor.element_size(),
       ucp_tag,
       ucp_tag_mask);
