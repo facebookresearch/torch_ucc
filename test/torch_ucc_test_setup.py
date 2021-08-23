@@ -49,7 +49,7 @@ def init_process_groups(bend, use_cuda):
   os.environ['MASTER_ADDR'] = 'localhost'
   os.environ['RANK']        = str(comm_rank)
   os.environ['WORLD_SIZE']  = str(comm_size)
-  dist.init_process_group('ucc', rank=comm_rank, world_size=comm_size)
+  dist.init_process_group('gloo', rank=comm_rank, world_size=comm_size)
   pg = dist.new_group(backend=bend)
 
   return pg
