@@ -372,7 +372,8 @@ void CommPG::ucc_create_team(
   team_params.oob.req_test = oob_allgather_test;
   team_params.oob.req_free = oob_allgather_free;
   team_params.oob.coll_info = oob_info;
-  team_params.oob.participants = oob_info->size;
+  team_params.oob.n_oob_eps = oob_info->size;
+  team_params.oob.oob_ep = oob_info->rank;
   team_params.ep = oob_info->rank;
   team_params.ep_range = UCC_COLLECTIVE_EP_RANGE_CONTIG;
   st = ucc_team_create_post(&ucc_comm.context, 1, &team_params, &team);
