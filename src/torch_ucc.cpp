@@ -13,6 +13,8 @@
 
 namespace c10d {
 
+namespace {
+
 const std::map<c10::DeviceType, ucs_memory_type_t> ucs_mtype_map = {
     {c10::kCPU, UCS_MEMORY_TYPE_HOST},
     {c10::kCUDA, UCS_MEMORY_TYPE_CUDA},
@@ -58,6 +60,51 @@ const std::map<ReduceOp, ucc_reduction_op_t> ucc_op_map = {
     {ReduceOp::BOR, UCC_OP_BOR},
     {ReduceOp::BXOR, UCC_OP_BXOR},
 };
+
+// borrow from ProcessGroupNCCL
+// Flatten each list in `tensor_lists' for a gather or scatter operation, and
+// ensure compatibility with the corresponding tensor in `other'.
+std::vector<at::Tensor> flatten_for_scatter_gather(
+    std::vector<std::vector<at::Tensor>>& tensor_lists,
+    std::vector<at::Tensor>& other,
+    size_t world_size) {
+  if (tensor_lists.size() != other.size()) {
+    TORCH_CHECK(false,
+        "Tensor list operands to scatter/gather must have the same length");
+  }
+  const auto num_devices = tensor_lists.size();
+
+  std::vector<at::Tensor> flattened;
+  flattened.resize(num_devices);
+
+  for (auto i = size_t{}; i < num_devices; ++i) {
+    if (tensor_lists[i].size() != world_size * num_devices) {
+      TORCH_CHECK(false,
+          "Tensor list input to scatter/gather must match number of collective"
+          " participants");
+    }
+
+    // Only check device match for the first tensor in the list; the call to
+    // newLikeFlat() below will check the rest.
+    if (tensor_lists[i].front().get_device() != other[i].get_device()) {
+      TORCH_CHECK(false,
+          "Corresponding input/output tensors to scatter/gather must all reside"
+          " on the same device");
+    }
+
+    for (const auto& t : tensor_lists[i]) {
+      if (t.numel() != other[i].numel()) {
+        TORCH_CHECK(false,
+            "All tensor operands to scatter/gather must have the same number of elements");
+      }
+    }
+    // Flatten the tensors (from all ranks) into a single big tensor.
+    flattened[i] = newLikeFlat(tensor_lists, i);
+  }
+  return flattened;
+}
+
+}
 
 struct torch_ucc_config_t {
   std::once_flag flag;
@@ -839,10 +886,41 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::reduce(
 }
 
 c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::reduce_scatter(
-    std::vector<at::Tensor>& /* unused */,
-    std::vector<std::vector<at::Tensor>>& /* unused */,
-    const ReduceScatterOptions& /* unused */) {
-  throw std::runtime_error("ProcessGroupUCC does not support reduce_scatter");
+    std::vector<at::Tensor>& outputTensors,
+    std::vector<std::vector<at::Tensor>>& inputTensors,
+    const ReduceScatterOptions& opts) {
+  check_tensor(outputTensors);
+  auto& tensor = outputTensors[0];
+  initComm(tensor.device());
+
+  auto inputFlattened =
+      flatten_for_scatter_gather(inputTensors, outputTensors, size_);
+  check_tensor(inputFlattened);
+
+  WorkData* data = new WorkData();
+
+  ucc_coll_args_t coll;
+  coll.mask = UCC_COLL_ARGS_FIELD_PREDEFINED_REDUCTIONS;
+  coll.coll_type = UCC_COLL_TYPE_REDUCE_SCATTER;
+  coll.reduce.predefined_op = ucc_op_map.at(opts.reduceOp);
+  coll.src.info.buffer = inputFlattened[0].data_ptr();
+  coll.src.info.count = inputFlattened[0].numel();
+  coll.src.info.datatype = ucc_dtype_map.at(inputFlattened[0].scalar_type());
+  coll.src.info.mem_type = to_ucc_memType(inputFlattened[0].device().type());
+  coll.dst.info.buffer = tensor.data_ptr();
+  coll.dst.info.count = tensor.numel();
+  coll.dst.info.datatype = ucc_dtype_map.at(tensor.scalar_type());
+  coll.dst.info.mem_type = to_ucc_memType(tensor.device().type());
+  SAVE_TENSORS(inputFlattened, data->src);
+  SAVE_TENSORS(outputTensors, data->dst);
+
+  return collective_post(
+      OpType::REDUCE_SCATTER,
+      coll,
+      std::unique_ptr<WorkData>(data),
+      tensor.device(),
+      outputTensors,
+      "ucc:reduce_scatter");
 }
 
 c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::scatter(
