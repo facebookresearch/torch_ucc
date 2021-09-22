@@ -133,7 +133,7 @@ ProcessGroupUCC::WorkUCC::~WorkUCC() {
 }
 
 void ProcessGroupUCC::WorkUCC::setException() {
-  if (exception()) {
+  if (exception() || !entry_) {
     return;
   }
   exception_ = entry_->eptr_;
@@ -165,7 +165,7 @@ bool ProcessGroupUCC::WorkUCC::wait(std::chrono::milliseconds /* unused */) {
   }
 #endif
   // wait for complete
-  while (!isCompleted())
+  while (entry_ && !isCompleted())
     ;
   setAndThrowException();
   // manually call profiling end callbacks if they are set,
@@ -411,13 +411,18 @@ c10::intrusive_ptr<ProcessGroup::Work> CommPG::enqueue_p2p(
     OpType opType,
     ucc_coll_req_h request,
     const char* prof_title) {
-  if (request == nullptr) {
-    // p2p2 request completed immediately don't save it to progress queue
-    return c10::make_intrusive<ProcessGroupUCC::WorkUCC>(
-        opType, prof_title);
-  }
   auto work = c10::make_intrusive<ProcessGroupUCC::WorkUCC>(
       opType, prof_title);
+  if (torch_ucc_config.use_future) {
+    work->future_ = c10::make_intrusive<at::ivalue::Future>(
+        c10::ListType::create(c10::TensorType::get()));
+  }
+  if (request == nullptr) {
+    // p2p2 request completed immediately don't save it to progress queue
+    // and mark future completed immediately
+    work->future_->markCompleted(c10::IValue(std::vector<at::Tensor>()));
+    return work;
+  }
   auto entry = std::make_shared<ProcessGroupUCC::ProgressEntry>(
       &ucx_comm, request);
   std::unique_lock<std::mutex> lock(mutex);
