@@ -93,6 +93,8 @@ namespace c10d {
 #define SAVE_TENSORS(_TENSORS, _DATA) (_DATA) = (_TENSORS);
 #endif
 
+constexpr const char* UCC_BACKEND_NAME = "UCC";
+
 enum torch_ucx_tag_type_t { TORCH_UCX_P2P_TAG, TORCH_UCX_OOB_TAG };
 
 struct event_pool_t {
@@ -189,6 +191,10 @@ class ProcessGroupUCC : public ProcessGroup {
   void initComm(c10::Device dev);
 
   ~ProcessGroupUCC() override;
+
+  const std::string getBackendName() const override {
+      return std::string(UCC_BACKEND_NAME);
+  }
 
   c10::intrusive_ptr<ProcessGroup::Work> collective_post(
       OpType opType,
