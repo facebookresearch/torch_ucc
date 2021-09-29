@@ -13,6 +13,8 @@
 
 namespace c10d {
 
+constexpr int64_t kBusyWaitMillis = 10;
+
 const std::map<c10::DeviceType, ucs_memory_type_t> ucs_mtype_map = {
     {c10::kCPU, UCS_MEMORY_TYPE_HOST},
     {c10::kCUDA, UCS_MEMORY_TYPE_CUDA},
@@ -305,7 +307,10 @@ void CommPG::ucx_disconnect_eps(
   if ((size_t)oob->store->add(oob->getKey("epclosed"), 1) == eps.size()) {
     oob->store->add(oob->getKey("epfinished"), 1);
   } else {
-    oob->store->wait({oob->getKey("epfinished")});
+    while ((size_t)oob->store->add(oob->getKey("epclosed"), 0) != eps.size()) {
+      ucp_worker_progress(ucx_comm.worker);
+      std::this_thread::sleep_for(std::chrono::milliseconds(kBusyWaitMillis));
+    }
   }
 }
 
@@ -427,6 +432,7 @@ c10::intrusive_ptr<ProcessGroup::Work> CommPG::enqueue_p2p(
   }
   auto entry = std::make_shared<ProcessGroupUCC::ProgressEntry>(
       &ucx_comm, request);
+  work->entry_ = entry;
   std::unique_lock<std::mutex> lock(mutex);
   progress_queue.push_back(entry);
   lock.unlock();
@@ -524,7 +530,8 @@ void CommPG::progress_loop() {
     std::exception_ptr eptr;
     try {
       while (work->request_->status > 0) {
-        work->comm_->progress();
+        ucc_comm.progress();
+        ucx_comm.progress();
       }
       if (work->request_->status < 0) {
         eptr = std::make_exception_ptr(
