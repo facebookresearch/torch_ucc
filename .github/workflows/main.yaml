@@ -54,6 +54,8 @@ jobs:
         /bin/bash ./test/start_test.sh ./test/torch_allreduce_test.py --backend=gloo
         echo "UCC broadcast"
         /bin/bash ./test/start_test.sh ./test/torch_bcast_test.py --backend=gloo
+        echo "UCC pt2pt"
+        /bin/bash ./test/start_test.sh ./test/torch_pt2pt_test.py --backend=gloo
     - name: Test PARAM
       run: |
         git clone ${PARAM_LINK} /tmp/param
@@ -77,4 +79,4 @@ jobs:
         echo "PARAM-Comms Non-blocking Alltoallv w/ UCC"
         /bin/bash ./test/start_test.sh /tmp/param/train/comms/pt/comms.py --backend ucc --device cpu --b 4 --e 4M --c 1 --z 0 --collective all_to_allv
         echo "PARAM-Comms Pt2pt w/ UCC"
-        /bin/bash ./test/start_test.sh /tmp/param/train/comms/pt/comms.py --backend ucc --device cpu --b 4 --e 4M --c 1 --pt2pt one2one
+        /bin/bash ./test/start_test.sh /tmp/param/train/comms/pt/comms.py --backend ucc --device cpu --b 4 --e 4M --c 1 --pt2pt one2one --src-ranks 0 --dst-ranks 1
