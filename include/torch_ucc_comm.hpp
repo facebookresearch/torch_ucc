@@ -38,6 +38,89 @@
 
 namespace c10d {
 
+// Macro to throw on a non-successful UCC return value.
+#define TORCH_UCC_CHECK(_cmd, _error_msg) \
+  do {                                    \
+    ucc_status_t result = _cmd;           \
+    if (result != UCC_OK) {               \
+      std::string err = c10::str(         \
+          logger->getLogPrefix(),         \
+          "UCC error: ",                  \
+          _error_msg,                     \
+          "\n in: ",                      \
+          std::string(__FILE__),          \
+          ":",                            \
+          std::to_string(__LINE__),       \
+          ":\n error code ",              \
+          result,                         \
+          "(",                            \
+          ucc_status_string(result),      \
+          ")");                           \
+      TORCH_CHECK(false, err);            \
+    }                                     \
+  } while (0)
+
+// Macro to throw on a non-successful UCX return value.
+#define TORCH_UCX_CHECK(_cmd, _error_msg) \
+  do {                                    \
+    ucs_status_t result = _cmd;           \
+    if (result != UCS_OK) {               \
+      std::string err = c10::str(         \
+          logger->getLogPrefix(),         \
+          "UCX error: ",                  \
+          _error_msg,                     \
+          "\n in: ",                      \
+          std::string(__FILE__),          \
+          ":",                            \
+          std::to_string(__LINE__),       \
+          ":\n error code ",              \
+          result,                         \
+          "(",                            \
+          ucs_status_string(result),      \
+          ")");                           \
+      TORCH_CHECK(false, err);            \
+    }                                     \
+  } while (0)
+
+enum torch_ucc_phase_t {
+  TORCH_UCC_INIT,
+  TORCH_UCC_READY,
+  TORCH_UCC_COLL_POST,
+  TORCH_UCC_COLL_PROGRESS,
+  TORCH_UCC_FINALIZE
+};
+
+const std::map<torch_ucc_phase_t, std::string> ucc_phase_map = {
+    {TORCH_UCC_INIT, "INIT"},
+    {TORCH_UCC_READY, "READY"},
+    {TORCH_UCC_COLL_POST, "COLL_POST"},
+    {TORCH_UCC_COLL_PROGRESS, "COLL_PROGRESS"},
+    {TORCH_UCC_FINALIZE, "FINALIZE"},
+};
+
+class TORCH_API ProcessGroupUCCLogger : public torch::CustomClassHolder {
+ public:
+  ProcessGroupUCCLogger();
+  ProcessGroupUCCLogger(std::string log_prefix);
+
+  std::string getLogPrefix();
+  void setLogPrefix(std::string log_prefix);
+  inline void logInfo(torch_ucc_phase_t phase, std::string msg) {
+    LOG(INFO) << getLogPrefix() << "[" << ucc_phase_map.at(phase) << "]"
+              << "[INFO] " << msg;
+  }
+  inline void logDebug(torch_ucc_phase_t phase, std::string msg) {
+    LOG(INFO) << getLogPrefix() << "[" << ucc_phase_map.at(phase) << "]"
+                 << "[DEBUG] " << msg;
+  }
+  inline void logError(torch_ucc_phase_t phase, std::string msg) {
+    LOG(ERROR) << getLogPrefix() << "[" << ucc_phase_map.at(phase) << "]"
+               << "[ERROR] " << msg;
+  }
+protected:
+  std::string log_prefix;
+};
+
 struct torch_ucc_oob_coll_info_t {
   c10::intrusive_ptr<Store> store;
   uint32_t comm_id;
@@ -56,6 +139,7 @@ class CommBase {
   virtual void progress() = 0;
   virtual void free_request(ucc_coll_req_h request) = 0;
   virtual ~CommBase() {}
+  c10::intrusive_ptr<ProcessGroupUCCLogger> logger;
 };
 
 class CommUCX : public CommBase {
@@ -66,7 +150,7 @@ class CommUCX : public CommBase {
  public:
   void progress() override;
   void free_request(ucc_coll_req_h request) override;
-  CommUCX(int comm_size);
+  CommUCX(int comm_size, const c10::intrusive_ptr<ProcessGroupUCCLogger>& logger);
   ~CommUCX();
 };
 
@@ -77,7 +161,7 @@ class CommUCC : public CommBase {
 
  public:
   void progress() override;
-  CommUCC(torch_ucc_oob_coll_info_t* oob_info);
+  CommUCC(torch_ucc_oob_coll_info_t* oob_info, const c10::intrusive_ptr<ProcessGroupUCCLogger>& logger);
   void free_request(ucc_coll_req_h request) override;
   ~CommUCC();
 };
