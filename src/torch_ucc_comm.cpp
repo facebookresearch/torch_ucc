@@ -12,17 +12,15 @@
 
 namespace c10d {
 
-CommUCX::CommUCX(int comm_size) {
+CommUCX::CommUCX(int comm_size, const c10::intrusive_ptr<ProcessGroupUCCLogger>& logger) {
   ucp_params_t params;
   ucp_config_t* config;
   ucs_status_t st;
   ucp_worker_params_t worker_params;
 
-  st = ucp_config_read("TORCH", nullptr, &config);
-  if (st != UCS_OK) {
-    LOG(ERROR) << "failed to read UCP config: " << ucs_status_string(st);
-    throw std::runtime_error(ucs_status_string(st));
-  }
+  TORCH_UCX_CHECK(
+      ucp_config_read("TORCH", nullptr, &config), "failed to read UCP config");
+
   memset(&params, 0, sizeof(ucp_params_t));
   params.field_mask = UCP_PARAM_FIELD_FEATURES | UCP_PARAM_FIELD_REQUEST_SIZE |
       UCP_PARAM_FIELD_ESTIMATED_NUM_EPS | UCP_PARAM_FIELD_TAG_SENDER_MASK |
@@ -35,18 +33,18 @@ CommUCX::CommUCX(int comm_size) {
     static_cast<ucc_coll_req_h>(request)->status = UCC_INPROGRESS;
   };
   params.request_cleanup = [](void*) {};
-  st = ucp_init(&params, config, &context);
+  TORCH_UCX_CHECK(
+      ucp_init(&params, config, &context), "failed to init UCP context");
   ucp_config_release(config);
-  if (st != UCS_OK) {
-    LOG(ERROR) << "failed to init UCP context: " << ucs_status_string(st);
-    throw std::runtime_error(ucs_status_string(st));
-  }
+
   memset(&worker_params, 0, sizeof(ucp_worker_params_t));
   worker_params.field_mask = UCP_WORKER_PARAM_FIELD_THREAD_MODE;
   worker_params.thread_mode = UCS_THREAD_MODE_MULTI;
   st = ucp_worker_create(context, &worker_params, &worker);
   if (st != UCS_OK) {
-    LOG(ERROR) << "failed to create UCP worker: " << ucs_status_string(st);
+    logger->logError(
+        TORCH_UCC_INIT,
+        c10::str("UCX failed to create UCP worker:", ucs_status_string(st)));
     ucp_cleanup(context);
     throw std::runtime_error(ucs_status_string(st));
   }
@@ -124,44 +122,32 @@ ucc_status_t oob_allgather_free(void* req) {
   return UCC_OK;
 }
 
-CommUCC::CommUCC(torch_ucc_oob_coll_info_t* oob_info) {
+CommUCC::CommUCC(torch_ucc_oob_coll_info_t* oob_info, const c10::intrusive_ptr<ProcessGroupUCCLogger>& logger) {
   ucc_lib_config_h lib_config;
   ucc_context_config_h context_config;
   ucc_lib_params_t lib_params;
   ucc_context_params_t context_params;
   ucc_status_t st;
 
-  st = ucc_lib_config_read("TORCH", nullptr, &lib_config);
-  if (st != UCC_OK) {
-    LOG(ERROR) << "failed to read UCC lib config: " << ucc_status_string(st);
-    throw std::runtime_error(ucc_status_string(st));
-  }
+  TORCH_UCC_CHECK(
+      ucc_lib_config_read("TORCH", nullptr, &lib_config),
+      "failed to read UCC lib config");
   memset(&lib_params, 0, sizeof(ucc_lib_params_t));
   lib_params.mask = UCC_LIB_PARAM_FIELD_THREAD_MODE;
   lib_params.thread_mode = UCC_THREAD_MULTIPLE;
-  st = ucc_init(&lib_params, lib_config, &lib);
+  TORCH_UCC_CHECK(
+      ucc_init(&lib_params, lib_config, &lib), "failed to init UCC lib");
   ucc_lib_config_release(lib_config);
-  if (st != UCC_OK) {
-    LOG(ERROR) << "failed to init UCC lib: " << ucc_status_string(st);
-    throw std::runtime_error(ucc_status_string(st));
-  }
   ucc_lib_attr_t lib_attr;
   lib_attr.mask = UCC_LIB_ATTR_FIELD_THREAD_MODE;
-  st = ucc_lib_get_attr(lib, &lib_attr);
-  if (st != UCC_OK) {
-    LOG(ERROR) << "failed to query for lib attr: " << ucc_status_string(st);
-    throw std::runtime_error(ucc_status_string(st));
-  }
-  if (lib_attr.thread_mode != UCC_THREAD_MULTIPLE) {
-    LOG(ERROR) << "ucc library wasn't initialized with mt support "
-               << "check ucc compile options ";
-    throw std::runtime_error("failed to init ucc lib");
-  }
+  TORCH_UCC_CHECK(
+      ucc_lib_get_attr(lib, &lib_attr), "failed to query for lib attr");
+  TORCH_CHECK(lib_attr.thread_mode == UCC_THREAD_MULTIPLE, "ucc library wasn't initialized with mt support, please check ucc compile options ");
   st = ucc_context_config_read(lib, NULL, &context_config);
   if (st != UCC_OK) {
-    ucc_finalize(lib);
-    LOG(ERROR) << "failed to read UCC context config: "
-               << ucc_status_string(st);
+    // FIXME: would this cause deadlock if only one rank fails?
+    TORCH_UCC_CHECK(ucc_finalize(lib), "failed to finalize UCC library when failing to read UCC context config");
+    logger->logError(TORCH_UCC_INIT, c10::str("failed to read UCC context config: ", ucc_status_string(st)));
     throw std::runtime_error(ucc_status_string(st));
   }
   st = ucc_context_config_modify(
@@ -172,8 +158,7 @@ CommUCC::CommUCC(torch_ucc_oob_coll_info_t* oob_info) {
   if (st != UCC_OK) {
     ucc_context_config_release(context_config);
     ucc_finalize(lib);
-    LOG(ERROR) << "failed to modify UCC context config: "
-               << ucc_status_string(st);
+    logger->logError(TORCH_UCC_INIT, c10::str("UCC failed to modify UCC context config: ", ucc_status_string(st)));
     throw std::runtime_error(ucc_status_string(st));
   }
   memset(&context_params, 0, sizeof(ucc_context_params_t));
@@ -186,26 +171,42 @@ CommUCC::CommUCC(torch_ucc_oob_coll_info_t* oob_info) {
   context_params.oob.req_test = oob_allgather_test;
   context_params.oob.req_free = oob_allgather_free;
   context_params.oob.coll_info = oob_info;
-  ucc_context_create(lib, &context_params, context_config, &context);
+  st = ucc_context_create(lib, &context_params, context_config, &context);
   ucc_context_config_release(context_config);
   if (st != UCC_OK) {
-    ucc_finalize(lib);
-    LOG(ERROR) << "failed to create UCC context: " << ucc_status_string(st);
+    TORCH_UCC_CHECK(ucc_finalize(lib), "failed to finalize UCC library when failing to creat UCC context");
+    logger->logError(TORCH_UCC_INIT, c10::str("UCC failed to create UCC context: ", ucc_status_string(st)));
     throw std::runtime_error(ucc_status_string(st));
   }
 }
 
 void CommUCC::progress() {
-  ucc_context_progress(context);
+  TORCH_UCC_CHECK(ucc_context_progress(context), "failed to progress UCC collective");
 }
 
 void CommUCC::free_request(ucc_coll_req_h request) {
-  ucc_collective_finalize(request);
+  TORCH_UCC_CHECK(ucc_collective_finalize(request), "failed to release UCC request");
 }
 
 CommUCC::~CommUCC() {
-  ucc_context_destroy(context);
-  ucc_finalize(lib);
+  TORCH_UCC_CHECK(ucc_context_destroy(context), "failed to destory UCC context");
+  TORCH_UCC_CHECK(ucc_finalize(lib), "failed to finalize UCC library");
 }
+
+std::string ProcessGroupUCCLogger::getLogPrefix() {
+  return log_prefix;
+}
+void ProcessGroupUCCLogger::setLogPrefix(std::string log_prefix_) {
+  log_prefix = log_prefix_;
+}
+
+ProcessGroupUCCLogger::ProcessGroupUCCLogger() {
+  setLogPrefix("[ProcessGroupUCC]");
+}
+ProcessGroupUCCLogger::ProcessGroupUCCLogger(std::string log_prefix) {
+  setLogPrefix(log_prefix);
+}
+
+
 
 } // namespace c10d
