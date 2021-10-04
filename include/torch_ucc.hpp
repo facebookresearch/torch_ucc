@@ -303,6 +303,7 @@ class ProcessGroupUCC : public ProcessGroup {
 };
 
 class CommPG {
+  c10::intrusive_ptr<ProcessGroupUCCLogger> logger;
   CommUCX ucx_comm;
   CommUCC ucc_comm;
   c10::DeviceIndex device_index;
@@ -313,12 +314,11 @@ class CommPG {
   std::deque<std::shared_ptr<ProcessGroupUCC::ProgressEntry>> progress_queue;
   bool stop_progress_loop;
   bool collective_inprogress;
-  c10::intrusive_ptr<ProcessGroupUCCLogger> logger;
 
  public:
   c10::DeviceIndex cuda_device_index;
-  CommPG(torch_ucc_oob_coll_info_t* oob_info,
-      c10::Device dev, const c10::intrusive_ptr<ProcessGroupUCCLogger>& logger);
+  CommPG(const c10::intrusive_ptr<ProcessGroupUCCLogger>& logger,
+      torch_ucc_oob_coll_info_t* oob_info, c10::Device dev);
 
   ~CommPG();
 

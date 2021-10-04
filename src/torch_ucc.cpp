@@ -184,9 +184,12 @@ c10::intrusive_ptr<c10::ivalue::Future> ProcessGroupUCC::WorkUCC::getFuture() {
 }
 
 void ProcessGroupUCC::ProgressEntry::finalize(std::exception_ptr eptr) {
-  ucc_status_t status;
-  status = request_->status;
-  comm_->free_request(request_);
+  ucc_status_t status = UCC_OK;
+
+  if (request_ != nullptr) {
+    status = request_->status;
+    comm_->free_request(request_);
+  }
   status_ = status;
   eptr_ = eptr;
   if (future_) {
@@ -200,13 +203,13 @@ void ProcessGroupUCC::ProgressEntry::finalize(std::exception_ptr eptr) {
 }
 
 CommPG::CommPG(
+    const c10::intrusive_ptr<ProcessGroupUCCLogger>& logger_,
     torch_ucc_oob_coll_info_t* oob_info,
-    c10::Device dev,
-    const c10::intrusive_ptr<ProcessGroupUCCLogger>& logger_)
-    : ucx_comm(oob_info->size, logger),
+    c10::Device dev)
+    : logger(logger_),
+      ucx_comm(oob_info->size, logger),
       ucc_comm(oob_info, logger),
-      cuda_device_index(TORCH_UCC_DEVICE_NOT_SET),
-      logger(logger_) {
+      cuda_device_index(TORCH_UCC_DEVICE_NOT_SET) {
   if (dev.is_cuda()) {
     cuda_device_index = dev.index();
   }
@@ -236,12 +239,31 @@ std::shared_ptr<CommPG> CommPG::get_comm(
   static uint32_t comm_id;
 
   std::lock_guard<std::mutex> lock(m);
-  id = (comm_id++ % TORCH_UCX_COMM_BITS);
-  oob->comm_id = id;
+  id = (comm_id % TORCH_UCX_COMM_BITS);
+
+  std::vector<uint8_t> remote_comm_id;
+  if (oob->rank != 0) {
+    std::vector<uint8_t> val = std::vector<uint8_t>(
+        reinterpret_cast<uint8_t*>(&id),
+        reinterpret_cast<uint8_t*>(&id) + sizeof(id));
+    oob->store->set("group_id" + std::to_string(oob->rank), val);
+  } else {
+    for (int i = 1; i < oob->size; i++) {
+      remote_comm_id = oob->store->get("group_id" + std::to_string(i));
+      id = std::max(id, *(reinterpret_cast<uint32_t*>(remote_comm_id.data())));
+    }
+    std::vector<uint8_t> val = std::vector<uint8_t>(
+        reinterpret_cast<uint8_t*>(&id),
+        reinterpret_cast<uint8_t*>(&id) + sizeof(id));
+    oob->store->set("group_id" + std::to_string(oob->rank), val);
+  }
+  remote_comm_id = oob->store->get("group_id" + std::to_string(0));
+  oob->comm_id = *(reinterpret_cast<uint32_t*>(remote_comm_id.data()));
+  comm_id = oob->comm_id + 1;
   std::shared_ptr<CommPG> shared_comm = comm.lock();
   if (!shared_comm) {
     shared_comm = std::make_shared<CommPG>(
-        oob, dev, logger);
+        logger, oob, dev);
     comm = shared_comm;
   } else {
     if (dev.is_cuda()) {
@@ -959,7 +981,6 @@ void ProcessGroupUCC::initComm(c10::Device dev) {
   }
 #ifdef USE_CUDA
   if (!cuda_ee && dev.is_cuda()) {
-    ucc_status_t st;
     stream = std::make_unique<at::cuda::CUDAStream>(
         at::cuda::getStreamFromPool(true, dev.index()));
     ucc_ee_params_t params;
