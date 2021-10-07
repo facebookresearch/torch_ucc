@@ -107,6 +107,9 @@ struct event_pool_t {
 class CommPG;
 
 class ProcessGroupUCC : public ProcessGroup {
+ private:
+  void set_timeout(ucc_coll_args_t &args);
+
  public:
   class WorkData {
    public:
@@ -186,7 +189,8 @@ class ProcessGroupUCC : public ProcessGroup {
   explicit ProcessGroupUCC(
       const c10::intrusive_ptr<Store>& store,
       int rank = -1,
-      int size = -1);
+      int size = -1,
+      std::chrono::duration<float> timeout = kProcessGroupDefaultTimeout);
 
   void initComm(c10::Device dev);
 
@@ -289,6 +293,7 @@ class ProcessGroupUCC : public ProcessGroup {
   }
 
  protected:
+  const std::chrono::duration<float> timeout_;
   torch_ucc_oob_coll_info_t oob;
   std::shared_ptr<CommPG> comm;
   uint32_t comm_id;

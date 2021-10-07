@@ -12,7 +12,8 @@
 
 namespace c10d {
 
-CommUCX::CommUCX(int comm_size, const c10::intrusive_ptr<ProcessGroupUCCLogger>& logger) {
+CommUCX::CommUCX(int comm_size, const c10::intrusive_ptr<ProcessGroupUCCLogger>& logger)
+    : CommBase(logger) {
   ucp_params_t params;
   ucp_config_t* config;
   ucs_status_t st;
@@ -122,7 +123,8 @@ ucc_status_t oob_allgather_free(void* req) {
   return UCC_OK;
 }
 
-CommUCC::CommUCC(torch_ucc_oob_coll_info_t* oob_info, const c10::intrusive_ptr<ProcessGroupUCCLogger>& logger) {
+CommUCC::CommUCC(torch_ucc_oob_coll_info_t* oob_info, const c10::intrusive_ptr<ProcessGroupUCCLogger>& logger)
+    : CommBase(logger) {
   ucc_lib_config_h lib_config;
   ucc_context_config_h context_config;
   ucc_lib_params_t lib_params;

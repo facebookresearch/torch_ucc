@@ -135,7 +135,8 @@ struct torch_ucc_oob_coll_info_t {
 
 class CommBase {
  public:
-  CommBase() {}
+  CommBase(const c10::intrusive_ptr<ProcessGroupUCCLogger>& logger_)
+    : logger(logger_) {}
   virtual void progress() = 0;
   virtual void free_request(ucc_coll_req_h request) = 0;
   virtual ~CommBase() {}

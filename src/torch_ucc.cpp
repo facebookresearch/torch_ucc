@@ -565,8 +565,9 @@ void CommPG::progress_loop() {
 ProcessGroupUCC::ProcessGroupUCC(
     const c10::intrusive_ptr<Store>& store,
     int rank,
-    int size)
-    : ProcessGroup(rank, size) {
+    int size,
+    std::chrono::duration<float> timeout)
+    : ProcessGroup(rank, size), timeout_(timeout) {
   std::call_once(torch_ucc_config.flag, read_confg);
   oob.rank = rank;
   oob.size = size;
@@ -600,6 +601,13 @@ ProcessGroupUCC::~ProcessGroupUCC() {
   }
 }
 
+void ProcessGroupUCC::set_timeout(ucc_coll_args_t &args)
+{
+  args.mask |= UCC_COLL_ARGS_FIELD_FLAGS;
+  args.flags |= UCC_COLL_ARGS_FLAG_TIMEOUT;
+  args.timeout = timeout_.count();
+}
+
 c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::collective_post(
     OpType opType,
     ucc_coll_args_t& coll,
@@ -607,6 +615,7 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::collective_post(
     c10::Device dev,
     std::vector<at::Tensor> &outputTensors,
     const char* prof_title) {
+  set_timeout(coll);
   auto work =
       c10::make_intrusive<ProcessGroupUCC::WorkUCC>(
           opType, torch_ucc_config.enable_profiling ? prof_title : nullptr);
@@ -784,6 +793,7 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::alltoall_base(
         outputTensor.element_size() * outputTensor.numel();
     coll.dst.info.datatype = UCC_DT_UINT8;
     coll.dst.info.mem_type = to_ucc_memType(outputTensor.device().type());
+    coll.flags = 0;
   } else {
     data = new AlltoallWorkData(size_);
     c10d::checkSplitSizes(inputSplitSizes, inputTensor, size_);
@@ -830,6 +840,7 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::barrier(
 
   ucc_coll_args_t coll;
   coll.mask = 0;
+  coll.flags = 0;
   coll.coll_type = UCC_COLL_TYPE_BARRIER;
   auto dummy_tensor = std::vector<at::Tensor>();
   return collective_post(
@@ -846,6 +857,7 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::broadcast(
 
   ucc_coll_args_t coll;
   coll.mask = 0;
+  coll.flags = 0;
   coll.coll_type = UCC_COLL_TYPE_BCAST;
   coll.src.info.buffer = tensor.data_ptr();
   coll.src.info.count = tensor.numel();
@@ -952,7 +964,7 @@ c10::intrusive_ptr<ProcessGroup> ProcessGroupUCC::createProcessGroupUCC(
     int rank,
     int size,
     const std::chrono::duration<float>& timeout) {
-  return c10::make_intrusive<ProcessGroupUCC>(store, rank, size);
+  return c10::make_intrusive<ProcessGroupUCC>(store, rank, size, timeout);
 }
 
 void ProcessGroupUCC::initComm(c10::Device dev) {
