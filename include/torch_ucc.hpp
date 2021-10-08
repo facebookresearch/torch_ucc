@@ -158,6 +158,21 @@ class ProcessGroupUCC : public ProcessGroup {
     std::exception_ptr eptr_;
   };
 
+  class WorkUCCsingle : public ProcessGroup::Work {
+    friend class ProcessGroupUCC;
+   public:
+    WorkUCCsingle(
+        OpType opType,
+        const char* prof_title)
+        : ProcessGroup::Work(-1, opType, prof_title) {}
+    ~WorkUCCsingle() {}
+    void setException() {}
+    void setAndThrowException() {}
+    bool isCompleted() override {return true;}
+    bool isSuccess() const override {return true;}
+    bool wait(std::chrono::milliseconds timeout = kUnsetTimeout) override {return true;}
+  };
+
   class WorkUCC : public ProcessGroup::Work {
     friend class ProcessGroupUCC;
     friend class CommPG;
