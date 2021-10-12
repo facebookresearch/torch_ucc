@@ -239,7 +239,7 @@ std::shared_ptr<CommPG> CommPG::get_comm(
   static uint32_t comm_id;
 
   std::lock_guard<std::mutex> lock(m);
-  id = (comm_id % TORCH_UCX_COMM_BITS);
+  id = (comm_id % TORCH_UCX_MAX_COMM);
 
   std::vector<uint8_t> remote_comm_id;
   if (oob->rank != 0) {
