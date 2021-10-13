@@ -12,6 +12,24 @@
 
 namespace c10d {
 
+const char *torch_ucc_rank_state_string(torch_ucc_rank_state_t state)
+{
+    switch (state) {
+    case TORCH_UCC_RANK_STATE_NOT_RESPONDIG:
+        return "Not responding";
+    case TORCH_UCC_RANK_STATE_COLLECTIVE_NOT_POSTED:
+        return "Collective wasn't posted";
+    case TORCH_UCC_RANK_STATE_COLLECTIVE_INPROGRESS:
+        return "Collective posted and in progress";
+    case TORCH_UCC_RANK_STATE_COLLECTIVE_TIMEOUT:
+        return "Collective timeout was triggered";
+    case TORCH_UCC_RANK_STATE_COLLECTIVE_DONE:
+        return "Collective was finished";
+    default:
+        return "Unknown state";
+    };
+}
+
 CommUCX::CommUCX(
     int comm_size,
     const c10::intrusive_ptr<ProcessGroupUCCLogger>& logger)
@@ -29,7 +47,8 @@ CommUCX::CommUCX(
       UCP_PARAM_FIELD_ESTIMATED_NUM_EPS | UCP_PARAM_FIELD_TAG_SENDER_MASK |
       UCP_PARAM_FIELD_REQUEST_INIT | UCP_PARAM_FIELD_REQUEST_CLEANUP;
   params.request_size = sizeof(ucc_coll_req_t);
-  params.features = UCP_FEATURE_TAG;
+  params.features = UCP_FEATURE_TAG |
+                    UCP_FEATURE_AM;
   params.estimated_num_eps = comm_size;
   params.tag_sender_mask = TORCH_UCX_RANK_MASK;
   params.request_init = [](void* request) {
@@ -49,6 +68,18 @@ CommUCX::CommUCX(
         TORCH_UCC_INIT,
         c10::str("UCX failed to create UCP worker:", ucs_status_string(st)));
     ucp_cleanup(context);
+    throw std::runtime_error(ucs_status_string(st));
+  }
+}
+
+void CommUCX::set_am_recv_handler(const ucp_am_handler_param_t *params) {
+  ucs_status_t st;
+
+  st = ucp_worker_set_am_recv_handler(worker, params);
+  if (st != UCS_OK) {
+    logger->logError(
+        TORCH_UCC_INIT,
+        c10::str("UCX failed to set am handler:", ucs_status_string(st)));
     throw std::runtime_error(ucs_status_string(st));
   }
 }
