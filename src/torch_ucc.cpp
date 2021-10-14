@@ -190,8 +190,11 @@ void ProcessGroupUCC::ProgressEntry::finalize(std::exception_ptr eptr) {
     status = request_->status;
     comm_->free_request(request_);
   }
-  status_ = status;
-  eptr_ = eptr;
+  if (eptr) {
+    eptr_ = eptr;
+  } else {
+    status_ = status;
+  }
   if (future_) {
     if (eptr) {
       future_->setError(eptr);
