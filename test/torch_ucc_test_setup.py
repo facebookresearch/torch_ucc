@@ -13,6 +13,7 @@ import torch.distributed as dist
 import torch_ucc
 import sys
 import os
+from datetime import timedelta
 
 def parse_test_args():
   parser = argparse.ArgumentParser(description="PG UCC Test")
@@ -33,7 +34,7 @@ def get_tensor(count, is_cuda):
   t = torch.randint(0, 100, (count,), dtype=torch.int, device=dev)
   return t
 
-def init_process_groups(bend, use_cuda):
+def init_process_groups(bend, use_cuda, to=timedelta(seconds=60)):
   try:
     comm_size = int(os.environ['OMPI_COMM_WORLD_SIZE'])
     comm_rank = int(os.environ['OMPI_COMM_WORLD_RANK'])
@@ -49,7 +50,7 @@ def init_process_groups(bend, use_cuda):
   os.environ['MASTER_ADDR'] = 'localhost'
   os.environ['RANK']        = str(comm_rank)
   os.environ['WORLD_SIZE']  = str(comm_size)
-  dist.init_process_group('ucc', rank=comm_rank, world_size=comm_size)
+  dist.init_process_group('ucc', rank=comm_rank, world_size=comm_size, timeout=to)
   pg = dist.new_group(backend=bend)
 
   return pg

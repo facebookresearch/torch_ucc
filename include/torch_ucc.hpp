@@ -107,6 +107,9 @@ struct event_pool_t {
 class CommPG;
 
 class ProcessGroupUCC : public ProcessGroup {
+ private:
+  void set_timeout(ucc_coll_args_t &args);
+
  public:
   class WorkData {
    public:
@@ -186,7 +189,8 @@ class ProcessGroupUCC : public ProcessGroup {
   explicit ProcessGroupUCC(
       const c10::intrusive_ptr<Store>& store,
       int rank = -1,
-      int size = -1);
+      int size = -1,
+      std::chrono::duration<float> timeout = kProcessGroupDefaultTimeout);
 
   void initComm(c10::Device dev);
 
@@ -289,6 +293,7 @@ class ProcessGroupUCC : public ProcessGroup {
   }
 
  protected:
+  const std::chrono::duration<float> timeout_;
   torch_ucc_oob_coll_info_t oob;
   std::shared_ptr<CommPG> comm;
   uint32_t comm_id;
@@ -303,6 +308,7 @@ class ProcessGroupUCC : public ProcessGroup {
 };
 
 class CommPG {
+  c10::intrusive_ptr<ProcessGroupUCCLogger> logger;
   CommUCX ucx_comm;
   CommUCC ucc_comm;
   c10::DeviceIndex device_index;
@@ -313,12 +319,11 @@ class CommPG {
   std::deque<std::shared_ptr<ProcessGroupUCC::ProgressEntry>> progress_queue;
   bool stop_progress_loop;
   bool collective_inprogress;
-  c10::intrusive_ptr<ProcessGroupUCCLogger> logger;
 
  public:
   c10::DeviceIndex cuda_device_index;
-  CommPG(torch_ucc_oob_coll_info_t* oob_info,
-      c10::Device dev, const c10::intrusive_ptr<ProcessGroupUCCLogger>& logger);
+  CommPG(const c10::intrusive_ptr<ProcessGroupUCCLogger>& logger,
+      torch_ucc_oob_coll_info_t* oob_info, c10::Device dev);
 
   ~CommPG();
 

@@ -184,11 +184,17 @@ c10::intrusive_ptr<c10::ivalue::Future> ProcessGroupUCC::WorkUCC::getFuture() {
 }
 
 void ProcessGroupUCC::ProgressEntry::finalize(std::exception_ptr eptr) {
-  ucc_status_t status;
-  status = request_->status;
-  comm_->free_request(request_);
-  status_ = status;
-  eptr_ = eptr;
+  ucc_status_t status = UCC_OK;
+
+  if (request_ != nullptr) {
+    status = request_->status;
+    comm_->free_request(request_);
+  }
+  if (eptr) {
+    eptr_ = eptr;
+  } else {
+    status_ = status;
+  }
   if (future_) {
     if (eptr) {
       future_->setError(eptr);
@@ -200,13 +206,13 @@ void ProcessGroupUCC::ProgressEntry::finalize(std::exception_ptr eptr) {
 }
 
 CommPG::CommPG(
+    const c10::intrusive_ptr<ProcessGroupUCCLogger>& logger_,
     torch_ucc_oob_coll_info_t* oob_info,
-    c10::Device dev,
-    const c10::intrusive_ptr<ProcessGroupUCCLogger>& logger_)
-    : ucx_comm(oob_info->size, logger),
+    c10::Device dev)
+    : logger(logger_),
+      ucx_comm(oob_info->size, logger),
       ucc_comm(oob_info, logger),
-      cuda_device_index(TORCH_UCC_DEVICE_NOT_SET),
-      logger(logger_) {
+      cuda_device_index(TORCH_UCC_DEVICE_NOT_SET) {
   if (dev.is_cuda()) {
     cuda_device_index = dev.index();
   }
@@ -236,12 +242,31 @@ std::shared_ptr<CommPG> CommPG::get_comm(
   static uint32_t comm_id;
 
   std::lock_guard<std::mutex> lock(m);
-  id = (comm_id++ % TORCH_UCX_COMM_BITS);
-  oob->comm_id = id;
+  id = (comm_id % TORCH_UCX_MAX_COMM);
+
+  std::vector<uint8_t> remote_comm_id;
+  if (oob->rank != 0) {
+    std::vector<uint8_t> val = std::vector<uint8_t>(
+        reinterpret_cast<uint8_t*>(&id),
+        reinterpret_cast<uint8_t*>(&id) + sizeof(id));
+    oob->store->set("group_id" + std::to_string(oob->rank), val);
+  } else {
+    for (int i = 1; i < oob->size; i++) {
+      remote_comm_id = oob->store->get("group_id" + std::to_string(i));
+      id = std::max(id, *(reinterpret_cast<uint32_t*>(remote_comm_id.data())));
+    }
+    std::vector<uint8_t> val = std::vector<uint8_t>(
+        reinterpret_cast<uint8_t*>(&id),
+        reinterpret_cast<uint8_t*>(&id) + sizeof(id));
+    oob->store->set("group_id" + std::to_string(oob->rank), val);
+  }
+  remote_comm_id = oob->store->get("group_id" + std::to_string(0));
+  oob->comm_id = *(reinterpret_cast<uint32_t*>(remote_comm_id.data()));
+  comm_id = oob->comm_id + 1;
   std::shared_ptr<CommPG> shared_comm = comm.lock();
   if (!shared_comm) {
     shared_comm = std::make_shared<CommPG>(
-        oob, dev, logger);
+        logger, oob, dev);
     comm = shared_comm;
   } else {
     if (dev.is_cuda()) {
@@ -543,8 +568,9 @@ void CommPG::progress_loop() {
 ProcessGroupUCC::ProcessGroupUCC(
     const c10::intrusive_ptr<Store>& store,
     int rank,
-    int size)
-    : ProcessGroup(rank, size) {
+    int size,
+    std::chrono::duration<float> timeout)
+    : ProcessGroup(rank, size), timeout_(timeout) {
   std::call_once(torch_ucc_config.flag, read_confg);
   oob.rank = rank;
   oob.size = size;
@@ -578,6 +604,13 @@ ProcessGroupUCC::~ProcessGroupUCC() {
   }
 }
 
+void ProcessGroupUCC::set_timeout(ucc_coll_args_t &args)
+{
+  args.mask |= UCC_COLL_ARGS_FIELD_FLAGS;
+  args.flags |= UCC_COLL_ARGS_FLAG_TIMEOUT;
+  args.timeout = timeout_.count();
+}
+
 c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::collective_post(
     OpType opType,
     ucc_coll_args_t& coll,
@@ -585,6 +618,7 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::collective_post(
     c10::Device dev,
     std::vector<at::Tensor> &outputTensors,
     const char* prof_title) {
+  set_timeout(coll);
   auto work =
       c10::make_intrusive<ProcessGroupUCC::WorkUCC>(
           opType, torch_ucc_config.enable_profiling ? prof_title : nullptr);
@@ -762,6 +796,7 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::alltoall_base(
         outputTensor.element_size() * outputTensor.numel();
     coll.dst.info.datatype = UCC_DT_UINT8;
     coll.dst.info.mem_type = to_ucc_memType(outputTensor.device().type());
+    coll.flags = 0;
   } else {
     data = new AlltoallWorkData(size_);
     c10d::checkSplitSizes(inputSplitSizes, inputTensor, size_);
@@ -808,6 +843,7 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::barrier(
 
   ucc_coll_args_t coll;
   coll.mask = 0;
+  coll.flags = 0;
   coll.coll_type = UCC_COLL_TYPE_BARRIER;
   auto dummy_tensor = std::vector<at::Tensor>();
   return collective_post(
@@ -824,6 +860,7 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::broadcast(
 
   ucc_coll_args_t coll;
   coll.mask = 0;
+  coll.flags = 0;
   coll.coll_type = UCC_COLL_TYPE_BCAST;
   coll.src.info.buffer = tensor.data_ptr();
   coll.src.info.count = tensor.numel();
@@ -930,7 +967,7 @@ c10::intrusive_ptr<ProcessGroup> ProcessGroupUCC::createProcessGroupUCC(
     int rank,
     int size,
     const std::chrono::duration<float>& timeout) {
-  return c10::make_intrusive<ProcessGroupUCC>(store, rank, size);
+  return c10::make_intrusive<ProcessGroupUCC>(store, rank, size, timeout);
 }
 
 void ProcessGroupUCC::initComm(c10::Device dev) {
@@ -959,7 +996,6 @@ void ProcessGroupUCC::initComm(c10::Device dev) {
   }
 #ifdef USE_CUDA
   if (!cuda_ee && dev.is_cuda()) {
-    ucc_status_t st;
     stream = std::make_unique<at::cuda::CUDAStream>(
         at::cuda::getStreamFromPool(true, dev.index()));
     ucc_ee_params_t params;
