@@ -59,6 +59,7 @@ const std::map<ReduceOp, ucc_reduction_op_t> ucc_op_map = {
     {ReduceOp::BAND, UCC_OP_BAND},
     {ReduceOp::BOR, UCC_OP_BOR},
     {ReduceOp::BXOR, UCC_OP_BXOR},
+    {ReduceOp::AVG, UCC_OP_AVG},
 };
 
 struct torch_ucc_config_t {
