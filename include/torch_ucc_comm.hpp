@@ -56,7 +56,11 @@ namespace c10d {
           "(",                            \
           ucc_status_string(result),      \
           ")");                           \
-      TORCH_CHECK(false, err);            \
+      if (logger->use_critical_check) {   \
+        TORCH_CHECK(false, err);          \
+      } else {                            \
+        LOG(ERROR) << err;                \
+      }                                   \
     }                                     \
   } while (0)
 
@@ -78,7 +82,11 @@ namespace c10d {
           "(",                            \
           ucs_status_string(result),      \
           ")");                           \
-      TORCH_CHECK(false, err);            \
+      if (logger->use_critical_check) {   \
+        TORCH_CHECK(false, err);          \
+      } else {                            \
+        LOG(ERROR) << err;                \
+      }                                   \
     }                                     \
   } while (0)
 
@@ -101,7 +109,7 @@ const std::map<torch_ucc_phase_t, std::string> ucc_phase_map = {
 class TORCH_API ProcessGroupUCCLogger : public torch::CustomClassHolder {
  public:
   ProcessGroupUCCLogger();
-  ProcessGroupUCCLogger(std::string log_prefix);
+  ProcessGroupUCCLogger(std::string log_prefix_, bool use_critical_check_);
 
   std::string getLogPrefix();
   void setLogPrefix(std::string log_prefix);
@@ -117,6 +125,8 @@ class TORCH_API ProcessGroupUCCLogger : public torch::CustomClassHolder {
     LOG(ERROR) << getLogPrefix() << "[" << ucc_phase_map.at(phase) << "]"
                << "[ERROR] " << msg;
   }
+
+  bool use_critical_check = false;
 protected:
   std::string log_prefix;
 };

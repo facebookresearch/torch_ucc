@@ -205,10 +205,11 @@ void ProcessGroupUCCLogger::setLogPrefix(std::string log_prefix_) {
 ProcessGroupUCCLogger::ProcessGroupUCCLogger() {
   setLogPrefix("[ProcessGroupUCC]");
 }
-ProcessGroupUCCLogger::ProcessGroupUCCLogger(std::string log_prefix) {
+ProcessGroupUCCLogger::ProcessGroupUCCLogger(
+    std::string log_prefix,
+    bool use_critical_check_)
+    : use_critical_check(use_critical_check_) {
   setLogPrefix(log_prefix);
 }
-
-
 
 } // namespace c10d

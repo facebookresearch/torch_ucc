@@ -66,6 +66,7 @@ struct torch_ucc_config_t {
   std::array<bool, 32> blocking_wait;
   bool enable_profiling;
   bool use_future;
+  bool use_critical_check;
 } torch_ucc_config;
 
 void read_confg() {
@@ -102,6 +103,11 @@ void read_confg() {
   env = std::getenv("TORCH_UCC_PROFILING_ENABLE");
   if (env) {
     torch_ucc_config.enable_profiling = std::atoi(env);
+  }
+  torch_ucc_config.use_critical_check = false;
+  env = std::getenv("TORCH_UCC_USE_CHECK");
+  if (env) {
+    torch_ucc_config.use_critical_check = std::atoi(env);
   }
 }
 
@@ -581,8 +587,11 @@ ProcessGroupUCC::ProcessGroupUCC(
   uint32_t pg_id = (id++ % TORCH_UCX_COMM_BITS);
 
   logger = c10::make_intrusive<ProcessGroupUCCLogger>(
-      c10::str("[Rank ", rank_, "]", "[ProcessGroupUCC-", pg_id, "]"));
-  logger->logInfo(TORCH_UCC_INIT, "Successfully read and set ProcessGroupUCC env. variables");
+      c10::str("[Rank ", rank_, "]", "[ProcessGroupUCC-", pg_id, "]"),
+      torch_ucc_config.use_critical_check);
+  logger->logInfo(
+      TORCH_UCC_INIT,
+      "Successfully read and set ProcessGroupUCC env. variables");
   // TODO: print log of all env. variables and their values
 }
 
