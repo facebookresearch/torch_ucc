@@ -68,12 +68,18 @@ struct torch_ucc_config_t {
   std::array<bool, 32> blocking_wait;
   bool enable_profiling;
   bool use_future;
+  bool shared_comm;
 } torch_ucc_config;
 
 void read_confg() {
   char* env;
 
+  // default configuration
   torch_ucc_config.blocking_wait.fill(true);
+  torch_ucc_config.enable_profiling = false;
+  torch_ucc_config.use_future = true;
+  torch_ucc_config.shared_comm = false;
+
   env = std::getenv("TORCH_UCC_ALLGATHER_BLOCKING_WAIT");
   if (env) {
     torch_ucc_config.blocking_wait[(std::uint8_t)OpType::ALLGATHER] =
@@ -102,13 +108,14 @@ void read_confg() {
   env = std::getenv("TORCH_UCC_USE_FUTURE");
   if (env) {
     torch_ucc_config.use_future = !!std::atoi(env);
-  } else {
-    torch_ucc_config.use_future = true;
   }
-  torch_ucc_config.enable_profiling = false;
   env = std::getenv("TORCH_UCC_PROFILING_ENABLE");
   if (env) {
-    torch_ucc_config.enable_profiling = std::atoi(env);
+    torch_ucc_config.enable_profiling = !!std::atoi(env);
+  }
+  env = std::getenv("TORCH_UCC_SHARED_COMM");
+  if (env) {
+    torch_ucc_config.shared_comm = !!std::atoi(env);
   }
 }
 
@@ -224,11 +231,12 @@ void ProcessGroupUCC::ProgressEntry::finalize(std::exception_ptr eptr) {
 
 CommPG::CommPG(
     const c10::intrusive_ptr<ProcessGroupUCCLogger>& logger_,
-    torch_ucc_oob_coll_info_t* oob_info,
+    std::shared_ptr<torch_ucc_oob_coll_info_t> oob_,
     c10::Device dev)
     : logger(logger_),
-      ucx_comm(oob_info->size, logger),
-      ucc_comm(oob_info, logger),
+      oob(oob_),
+      ucx_comm(oob->size, logger),
+      ucc_comm(oob, logger),
       cuda_device_index(TORCH_UCC_DEVICE_NOT_SET) {
   if (dev.is_cuda()) {
     cuda_device_index = dev.index();
@@ -252,7 +260,7 @@ CommPG::~CommPG() {
 std::shared_ptr<CommPG> CommPG::get_comm(
     uint32_t& id,
     c10::Device dev,
-    torch_ucc_oob_coll_info_t* oob,
+    std::shared_ptr<torch_ucc_oob_coll_info_t> oob,
     const c10::intrusive_ptr<ProcessGroupUCCLogger>& logger) {
   static std::mutex m;
   static std::weak_ptr<CommPG> comm;
@@ -280,28 +288,35 @@ std::shared_ptr<CommPG> CommPG::get_comm(
   remote_comm_id = oob->store->get("group_id" + std::to_string(0));
   oob->comm_id = *(reinterpret_cast<uint32_t*>(remote_comm_id.data()));
   comm_id = oob->comm_id + 1;
-  std::shared_ptr<CommPG> shared_comm = comm.lock();
-  if (!shared_comm) {
-    shared_comm = std::make_shared<CommPG>(logger, oob, dev);
-    comm = shared_comm;
-  } else {
-    if (dev.is_cuda()) {
-      if ((shared_comm->cuda_device_index != TORCH_UCC_DEVICE_NOT_SET) &&
-          (shared_comm->cuda_device_index != dev.index())) {
-        TORCH_UCC_LOG_ERROR(
-            TORCH_UCC_INIT,
-            "ucc communicator was initialized with different cuda device, multi device is not supported");
-        throw std::runtime_error(ucc_status_string(UCC_ERR_NOT_SUPPORTED));
+
+  if (torch_ucc_config.shared_comm) {
+    std::shared_ptr<CommPG> shared_comm = comm.lock();
+    if (!shared_comm) {
+      shared_comm = std::make_shared<CommPG>(
+          logger, oob, dev);
+      comm = shared_comm;
+    } else {
+      if (dev.is_cuda()) {
+        if ((shared_comm->cuda_device_index != TORCH_UCC_DEVICE_NOT_SET) &&
+            (shared_comm->cuda_device_index != dev.index())) {
+          TORCH_UCC_LOG_ERROR(
+              TORCH_UCC_INIT,
+              "ucc communicator was initialized with different cuda device,"
+              "multi device is not supported");
+          throw std::runtime_error(ucc_status_string(UCC_ERR_NOT_SUPPORTED));
+        }
+        shared_comm->cuda_device_index = dev.index();
       }
-      shared_comm->cuda_device_index = dev.index();
     }
+    return shared_comm;
+  } else {
+    return std::make_shared<CommPG>(logger, oob, dev);
   }
-  return shared_comm;
 }
 
 void CommPG::ucx_connect_eps(
     std::vector<ucp_ep_h>& eps,
-    torch_ucc_oob_coll_info_t* oob) {
+    std::shared_ptr<torch_ucc_oob_coll_info_t> oob) {
   ucp_address_t* local_addr;
   size_t local_addr_len;
   std::vector<uint8_t> peer_addr;
@@ -329,7 +344,7 @@ void CommPG::ucx_connect_eps(
 
 void CommPG::ucx_disconnect_eps(
     std::vector<ucp_ep_h>& eps,
-    torch_ucc_oob_coll_info_t* oob) {
+    std::shared_ptr<torch_ucc_oob_coll_info_t> oob) {
   ucs_status_t st;
 
   for (ucp_ep_h& ep : eps) {
@@ -422,7 +437,7 @@ ucc_coll_req_h CommPG::recv_nb(
 
 void CommPG::ucc_create_team(
     ucc_team_h& team,
-    torch_ucc_oob_coll_info_t* oob_info) {
+    std::shared_ptr<torch_ucc_oob_coll_info_t> oob) {
   ucc_status_t st;
   ucc_team_params_t team_params;
   team_params.mask = UCC_TEAM_PARAM_FIELD_EP | UCC_TEAM_PARAM_FIELD_EP_RANGE |
@@ -430,10 +445,10 @@ void CommPG::ucc_create_team(
   team_params.oob.allgather = oob_allgather;
   team_params.oob.req_test = oob_allgather_test;
   team_params.oob.req_free = oob_allgather_free;
-  team_params.oob.coll_info = oob_info;
-  team_params.oob.n_oob_eps = oob_info->size;
-  team_params.oob.oob_ep = oob_info->rank;
-  team_params.ep = oob_info->rank;
+  team_params.oob.coll_info = oob.get();
+  team_params.oob.n_oob_eps = oob->size;
+  team_params.oob.oob_ep = oob->rank;
+  team_params.ep = oob->rank;
   team_params.ep_range = UCC_COLLECTIVE_EP_RANGE_CONTIG;
   TORCH_UCC_CHECK(
       ucc_team_create_post(&ucc_comm.context, 1, &team_params, &team),
@@ -597,9 +612,10 @@ ProcessGroupUCC::ProcessGroupUCC(
     std::chrono::duration<float> timeout)
     : ProcessGroup(rank, size), timeout_(timeout) {
   std::call_once(torch_ucc_config.flag, read_confg);
-  oob.rank = rank;
-  oob.size = size;
-  oob.store = store;
+  oob = std::make_shared<torch_ucc_oob_coll_info_t>();
+  oob->rank = rank;
+  oob->size = size;
+  oob->store = store;
   comm = nullptr;
   cuda_ee = nullptr;
   static uint32_t id = 0;
@@ -620,19 +636,19 @@ ProcessGroupUCC::~ProcessGroupUCC() {
     comm->ucc_destroy_team(team);
     TORCH_UCC_LOG_INFO(
         TORCH_UCC_FINALIZE, "Successfully destroyed UCC library");
-    comm->ucx_disconnect_eps(eps, &oob);
+    comm->ucx_disconnect_eps(eps, oob);
     TORCH_UCC_LOG_INFO(
         TORCH_UCC_FINALIZE, "Successfully destroyed UCX library");
     try {
       if (cuda_ee) {
         ucc_ee_destroy(cuda_ee);
       }
-      if ((size_t)oob.store->add(oob.getKey("ucc_pg_closed"), 1) ==
+      if ((size_t)oob->store->add(oob->getKey("ucc_pg_closed"), 1) ==
           eps.size()) {
         std::vector<uint8_t> val = {1};
-        oob.store->set(oob.getKey("ucc_pg_finished"), val);
+        oob->store->set(oob->getKey("ucc_pg_finished"), val);
       } else {
-        oob.store->wait({oob.getKey("ucc_pg_finished")});
+        oob->store->wait({oob->getKey("ucc_pg_finished")});
       }
     } catch (std::exception& ex) {
       LOG(ERROR) << "(~ProcessGroupUCC) Caught error in Store Operation .. "
@@ -1180,10 +1196,10 @@ void ProcessGroupUCC::initComm(c10::Device dev) {
       c10::cuda::set_device(dev.index());
     }
 #endif
-    comm = CommPG::get_comm(comm_id, dev, &oob, logger);
-    comm->ucx_connect_eps(eps, &oob);
+    comm = CommPG::get_comm(comm_id, dev, oob, logger);
+    comm->ucx_connect_eps(eps, oob);
     TORCH_UCC_LOG_INFO(TORCH_UCC_INIT, "Successfully initialized UCX library");
-    comm->ucc_create_team(team, &oob);
+    comm->ucc_create_team(team, oob);
     TORCH_UCC_LOG_INFO(TORCH_UCC_INIT, "Successfully initialized UCC library");
     logger->setPhase(TORCH_UCC_READY);
   } else {
@@ -1192,7 +1208,8 @@ void ProcessGroupUCC::initComm(c10::Device dev) {
           (comm->cuda_device_index != dev.index())) {
         TORCH_UCC_LOG_ERROR(
             TORCH_UCC_INIT,
-            "ucc communicator was initialized with different cuda device, multi device is not supported");
+            "ucc communicator was initialized with different cuda device,"
+            "multi device is not supported");
         throw std::runtime_error(ucc_status_string(UCC_ERR_NOT_SUPPORTED));
       }
       comm->cuda_device_index = dev.index();

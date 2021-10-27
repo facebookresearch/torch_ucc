@@ -311,7 +311,7 @@ class ProcessGroupUCC : public ProcessGroup {
 
  protected:
   const std::chrono::duration<float> timeout_;
-  torch_ucc_oob_coll_info_t oob;
+  std::shared_ptr<torch_ucc_oob_coll_info_t> oob;
   std::shared_ptr<CommPG> comm = {nullptr};
   uint32_t comm_id;
   std::vector<ucp_ep_h> eps;
@@ -326,6 +326,7 @@ class ProcessGroupUCC : public ProcessGroup {
 
 class CommPG {
   c10::intrusive_ptr<ProcessGroupUCCLogger> logger;
+  std::shared_ptr<torch_ucc_oob_coll_info_t> oob;
   CommUCX ucx_comm;
   CommUCC ucc_comm;
   c10::DeviceIndex device_index;
@@ -340,21 +341,21 @@ class CommPG {
  public:
   c10::DeviceIndex cuda_device_index;
   CommPG(const c10::intrusive_ptr<ProcessGroupUCCLogger>& logger,
-      torch_ucc_oob_coll_info_t* oob_info, c10::Device dev);
+      std::shared_ptr<torch_ucc_oob_coll_info_t> oob, c10::Device dev);
 
   ~CommPG();
 
   void ucx_connect_eps(
       std::vector<ucp_ep_h>& eps,
-      torch_ucc_oob_coll_info_t* oob);
+      std::shared_ptr<torch_ucc_oob_coll_info_t> oob);
 
   void ucx_disconnect_eps(
       std::vector<ucp_ep_h>& eps,
-      torch_ucc_oob_coll_info_t* oob);
+      std::shared_ptr<torch_ucc_oob_coll_info_t> oob);
 
   void ucc_create_team(
       ucc_team_h& team,
-      torch_ucc_oob_coll_info_t* oob_info);
+      std::shared_ptr<torch_ucc_oob_coll_info_t> oob);
 
   void ucc_destroy_team(ucc_team_h& team);
 
@@ -381,7 +382,7 @@ class CommPG {
   static std::shared_ptr<CommPG> get_comm(
       uint32_t& id,
       c10::Device dev,
-      torch_ucc_oob_coll_info_t *oob,
+      std::shared_ptr<torch_ucc_oob_coll_info_t> oob,
       const c10::intrusive_ptr<ProcessGroupUCCLogger>& logger);
 
   void progress_loop();
