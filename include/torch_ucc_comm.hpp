@@ -145,8 +145,8 @@ class CommBase {
 
 class CommUCX : public CommBase {
  public:
-  ucp_context_h context;
-  ucp_worker_h worker;
+  ucp_context_h context {nullptr};
+  ucp_worker_h worker {nullptr};
 
  public:
   void progress() override;
@@ -157,8 +157,8 @@ class CommUCX : public CommBase {
 
 class CommUCC : public CommBase {
  public:
-  ucc_lib_h lib;
-  ucc_context_h context;
+  ucc_lib_h lib {nullptr};
+  ucc_context_h context {nullptr};
 
  public:
   void progress() override;
