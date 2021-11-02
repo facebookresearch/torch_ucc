@@ -210,8 +210,8 @@ CommPG::CommPG(
     torch_ucc_oob_coll_info_t* oob_info,
     c10::Device dev)
     : logger(logger_),
-      ucx_comm(oob_info->size, logger),
-      ucc_comm(oob_info, logger),
+			ucx_comm(oob_info->size, logger),
+			ucc_comm(oob_info, logger),
       cuda_device_index(TORCH_UCC_DEVICE_NOT_SET) {
   if (dev.is_cuda()) {
     cuda_device_index = dev.index();
@@ -330,14 +330,20 @@ void CommPG::ucx_disconnect_eps(
       ucp_request_free(close_req);
     }
   }
-  if ((size_t)oob->store->add(oob->getKey("epclosed"), 1) == eps.size()) {
-    oob->store->add(oob->getKey("epfinished"), 1);
-  } else {
-    while ((size_t)oob->store->add(oob->getKey("epclosed"), 0) != eps.size()) {
-      ucp_worker_progress(ucx_comm.worker);
-      std::this_thread::sleep_for(std::chrono::milliseconds(kBusyWaitMillis));
-    }
-  }
+	if (!eps.size()) {
+		return;
+	}
+	try {
+		auto sz = (size_t)oob->store->add(oob->getKey("epclosed"), 1);
+  	while (sz != eps.size()) {
+    	ucp_worker_progress(ucx_comm.worker);
+    	std::this_thread::sleep_for(std::chrono::milliseconds(kBusyWaitMillis));
+			sz = (size_t)oob->store->add(oob->getKey("epclosed"), 0);
+  	}
+	} catch (std::exception& ex) {
+		LOG(ERROR) << "(disconnect_eps) Caught error in Store Operation .. "
+							 << "[" << ex.what() << "]";
+	}
 }
 
 ucc_coll_req_h CommPG::send_nb(
@@ -578,7 +584,7 @@ ProcessGroupUCC::ProcessGroupUCC(
   comm = nullptr;
   cuda_ee = nullptr;
   static uint32_t id = 0;
-  uint32_t pg_id = (id++ % TORCH_UCX_COMM_BITS);
+  uint32_t pg_id = (id++ % TORCH_UCX_MAX_COMM);
 
   logger = c10::make_intrusive<ProcessGroupUCCLogger>(
       c10::str("[Rank ", rank_, "]", "[ProcessGroupUCC-", pg_id, "]"));
@@ -592,15 +598,21 @@ ProcessGroupUCC::~ProcessGroupUCC() {
     logger->logInfo(TORCH_UCC_FINALIZE, "Successfully destoryed UCC library");
     comm->ucx_disconnect_eps(eps, &oob);
     logger->logInfo(TORCH_UCC_FINALIZE, "Successfully destoryed UCX library");
-    if (cuda_ee) {
-      ucc_ee_destroy(cuda_ee);
-    }
+		try {
+    	if (cuda_ee) {
+      	ucc_ee_destroy(cuda_ee);
+    	}
+    	if ((size_t)oob.store->add(oob.getKey("ucc_pg_closed"), 1) == eps.size()) {
+				std::vector<uint8_t> val = {1};
+      	oob.store->set(oob.getKey("ucc_pg_finished"), val);
+    	} else {
+      	oob.store->wait({oob.getKey("ucc_pg_finished")});
+    	}
+		} catch (std::exception& ex) {
+			LOG(ERROR) << "(~ProcessGroupUCC) Caught error in Store Operation .. "
+								 << "[" << ex.what() << "]";
+		}
     comm = nullptr;
-    if ((size_t)oob.store->add(oob.getKey("ucc_pg_closed"), 1) == eps.size()) {
-      oob.store->add(oob.getKey("ucc_pg_finished"), 1);
-    } else {
-      oob.store->wait({oob.getKey("ucc_pg_finished")});
-    }
   }
 }
 
