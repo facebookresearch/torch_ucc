@@ -850,8 +850,35 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::alltoall_base(
 }
 
 c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::barrier(
-    const BarrierOptions& /* unused */) {
-  initComm(c10::DeviceType::CPU);
+    const BarrierOptions& opts) {
+  c10::Device device = c10::Device(c10::DeviceType::CPU);
+#ifdef USE_CUDA
+  auto numGPUs = at::cuda::getNumGPUs();
+  if (!opts.device_ids.empty()) {
+    device = c10::Device(c10::DeviceType::CUDA, opts.device_ids.front());
+  } else if (comm && comm->cuda_device_index != TORCH_UCC_DEVICE_NOT_SET) {
+    device = c10::Device(c10::DeviceType::CUDA, comm->cuda_device_index);
+  } else if (numGPUs > 0) {
+    int8_t deviceIdx = static_cast<int8_t>(c10::cuda::current_device());
+    // if current device is 0, likely the device is not set, use the best guess
+    if (0 == (int)deviceIdx) {
+      deviceIdx = static_cast<int8_t>(this->getRank() % numGPUs);
+    }
+    logger->logInfo(
+        TORCH_UCC_COLL_POST,
+        c10::str(
+            "post barrier before specifying any GPU while there are ",
+            numGPUs,
+            " GPUs available. ",
+            "Not clear if GPU barrier is required, using GPU ",
+            (int)deviceIdx,
+            " to perform barrier. ",
+            "Specify device_ids option in barrier() to force ",
+            "use of a particular device"));
+    device = c10::Device(c10::DeviceType::CUDA, deviceIdx);
+  }
+#endif
+  initComm(device);
 
   ucc_coll_args_t coll;
   coll.mask = 0;
@@ -859,7 +886,7 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::barrier(
   coll.coll_type = UCC_COLL_TYPE_BARRIER;
   auto dummy_tensor = std::vector<at::Tensor>();
   return collective_post(
-      OpType::BARRIER, coll, nullptr, c10::DeviceType::CPU, dummy_tensor, "ucc:barrier");
+      OpType::BARRIER, coll, nullptr, device, dummy_tensor, "ucc:barrier");
 }
 
 c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::broadcast(
