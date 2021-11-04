@@ -295,11 +295,11 @@ class ProcessGroupUCC : public ProcessGroup {
  protected:
   const std::chrono::duration<float> timeout_;
   torch_ucc_oob_coll_info_t oob;
-  std::shared_ptr<CommPG> comm;
+  std::shared_ptr<CommPG> comm = {nullptr};
   uint32_t comm_id;
   std::vector<ucp_ep_h> eps;
-  ucc_team_h team;
-  ucc_ee_h cuda_ee;
+  ucc_team_h team {nullptr};
+  ucc_ee_h cuda_ee {nullptr};
 #ifdef USE_CUDA
   std::unique_ptr<at::cuda::CUDAStream> stream = nullptr;
   event_pool_t ep;
