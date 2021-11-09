@@ -66,6 +66,7 @@ struct torch_ucc_config_t {
   std::array<bool, 32> blocking_wait;
   bool enable_profiling;
   bool use_future;
+  int comm_state_check_timeout;
 } torch_ucc_config;
 
 void read_confg() {
@@ -107,6 +108,11 @@ void read_confg() {
   env = std::getenv("TORCH_UCC_PROFILING_ENABLE");
   if (env) {
     torch_ucc_config.enable_profiling = std::atoi(env);
+  }
+  torch_ucc_config.comm_state_check_timeout = 2000;
+  env = std::getenv("TORCH_UCC_COMM_CHECK_TIMEOUT");
+  if (env) {
+    torch_ucc_config.comm_state_check_timeout = std::atoi(env);
   }
 }
 
@@ -230,6 +236,27 @@ ucs_status_t torch_ucc_timeout_am_cb(
   torch_ucc_timeout_desc_t *dsc = (torch_ucc_timeout_desc_t*)header;
   CommPG *comm = (CommPG*)arg;
   torch_ucc_rank_state_t state;
+  ucp_request_param_t params;
+  ucp_tag_t ucp_tag;
+
+#ifdef USE_CUDA
+  if (comm->cuda_device_index >= 0) {
+    CUdevice device;
+    CUresult st;
+    unsigned int flags;
+    int active;
+    st = cuDeviceGet(&device, comm->cuda_device_index);
+    if (st != CUDA_SUCCESS) {
+      state = TORCH_UCC_RANK_STATE_DEVICE_ERROR;
+      goto send_response;
+    }
+    st = cuDevicePrimaryCtxGetState(device, &flags, &active);
+    if (st != CUDA_SUCCESS || !active) {
+      state = TORCH_UCC_RANK_STATE_DEVICE_ERROR;
+      goto send_response;
+    }
+  }
+#endif
 
   state = TORCH_UCC_RANK_STATE_COLLECTIVE_NOT_POSTED;
   if (comm->seq_num > dsc->seq_num) {
@@ -248,9 +275,9 @@ ucs_status_t torch_ucc_timeout_am_cb(
       }
     }
   }
-  ucp_tag_t ucp_tag;
+
+send_response:
   TORCH_UCX_MAKE_OOB_SEND_TAG(ucp_tag, 0, dsc->rank, dec->comm_id);
-  ucp_request_param_t params;
   params.op_attr_mask = UCP_OP_ATTR_FIELD_CALLBACK |
       UCP_OP_ATTR_FIELD_DATATYPE;
   params.datatype = ucp_dt_make_contig(sizeof(torch_ucc_rank_state_t));
@@ -545,7 +572,8 @@ void CommPG::enqueue_collective(
     ucc_coll_args_t& coll,
     ucc_team_h team,
     std::vector<ucp_ep_h> *eps,
-    int rank) {
+    int rank,
+    int comm_id) {
   ucc_coll_req_h request;
   TORCH_UCC_CHECK(
       ucc_collective_init(&coll, &request, team), "failed to init collective");
@@ -557,6 +585,7 @@ void CommPG::enqueue_collective(
   entry->future_ = work->getFuture();
   entry->eps = eps;
   entry->rank = rank;
+  entry->comm_id = comm_id;
   work->entry_ = entry;
   std::unique_lock<std::mutex> lock(mutex);
   progress_queue.push_back(entry);
@@ -570,7 +599,10 @@ void CommPG::enqueue_cuda_collective(
     c10::intrusive_ptr<ProcessGroupUCC::WorkUCC> work,
     ucc_coll_args_t& coll,
     ucc_team_h team,
-    ucc_ee_h ee) {
+    ucc_ee_h ee,
+    std::vector<ucp_ep_h> *eps,
+    int rank,
+    int comm_id) {
   ucc_coll_req_h request;
   TORCH_UCC_CHECK(
       ucc_collective_init(&coll, &request, team),
@@ -587,8 +619,11 @@ void CommPG::enqueue_cuda_collective(
   TORCH_CHECK(st == UCC_OK && post_ev->ev_type == UCC_EVENT_COLLECTIVE_POST);
   ucc_ee_ack_event(ee, post_ev);
   auto entry =
-      std::make_shared<ProcessGroupUCC::ProgressEntry>(&ucc_comm, request);
+      std::make_shared<ProcessGroupUCC::ProgressEntry>(&ucc_comm, request, seq_num++);
   entry->data = std::move(data);
+  entry->eps = eps;
+  entry->rank = rank;
+  entry->comm_id = comm_id;
   work->entry_ = entry;
   std::unique_lock<std::mutex> lock(mutex);
   progress_queue.push_back(entry);
@@ -599,9 +634,9 @@ void CommPG::enqueue_cuda_collective(
 
 void CommPG::check_communicator_status(
       int my_rank,
+      int comm_id,
       uint64_t seq_num,
       std::vector<ucp_ep_h> *eps) {
-  ucs_status_ptr_t st;
   ucp_request_param_t params_am, params_recv;
   torch_ucc_timeout_desc_t dsc;
 
@@ -612,17 +647,21 @@ void CommPG::check_communicator_status(
     static_cast<ucc_coll_req_h>(request)->status = UCC_OK;
   };
   dsc.seq_num = seq_num;
-  dsc.comm_id = 0;
-  for (auto i = 0; i < eps->size(); i++) {
+  dsc.comm_id = comm_id;
+  for (auto i = 0; i < (int)eps->size(); i++) {
+    if (i == my_rank) {
+      comm_state[i] = TORCH_UCC_RANK_STATE_COLLECTIVE_TIMEOUT;
+      continue;
+    }
     comm_state[i] = TORCH_UCC_RANK_STATE_NOT_RESPONDIG;
     dsc.rank = i;
-    st = ucp_am_send_nbx((*eps)[i], TORCH_UCC_TIMEOUT_AM_ID, &dsc, sizeof(dsc),
-                          nullptr, 0ul, &params_am);
+    ucp_am_send_nbx((*eps)[i], TORCH_UCC_TIMEOUT_AM_ID, &dsc, sizeof(dsc),
+                    nullptr, 0ul, &params_am);
     ucp_tag_t ucp_tag, ucp_tag_mask;
     TORCH_UCX_MAKE_OOB_RECV_TAG(ucp_tag, ucp_tag_mask, 0, i, dsc.comm_id);
     params_recv.op_attr_mask = UCP_OP_ATTR_FIELD_CALLBACK |
-      UCP_OP_ATTR_FIELD_DATATYPE;;
-    params_recv.datatype = ucp_dt_make_contig(sizeof(ucc_status_t));
+      UCP_OP_ATTR_FIELD_DATATYPE;
+    params_recv.datatype = ucp_dt_make_contig(sizeof(torch_ucc_rank_state_t));
     params_recv.cb.recv = [](void* request,
                              ucs_status_t status,
                              const ucp_tag_recv_info_t* info,
@@ -634,12 +673,13 @@ void CommPG::check_communicator_status(
   }
   auto start = std::chrono::system_clock::now();
   auto end = std::chrono::system_clock::now();
-  while((std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count() <= 2000))
+  while (std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count() <=
+         torch_ucc_config.comm_state_check_timeout)
   {
     end = std::chrono::system_clock::now();
     ucx_comm.progress();
   }
-  for (auto i = 0; i < eps->size(); i++) {
+  for (auto i = 0; i < (int)eps->size(); i++) {
     if (comm_state[i] != TORCH_UCC_RANK_STATE_COLLECTIVE_DONE) {
         std::string err_log = c10::str(
           "on rank ",
@@ -692,7 +732,8 @@ void CommPG::progress_loop() {
       eptr = std::current_exception();
     }
     if (work->request_->status == UCC_ERR_TIMED_OUT) {
-      check_communicator_status(work->rank, work->seq_num_, work->eps);
+      check_communicator_status(work->rank, work->comm_id, work->seq_num_,
+        work->eps);
     }
     work->finalize(eptr);
     work = nullptr;
@@ -805,7 +846,8 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::collective_post(
         work->future_ = c10::make_intrusive<at::ivalue::Future>(
             c10::ListType::create(c10::TensorType::get()));
       }
-      comm->enqueue_collective(std::move(data), work, coll, team, &eps, rank_);
+      comm->enqueue_collective(std::move(data), work, coll, team, &eps, rank_,
+        comm_id);
       return work;
     }
 #ifdef USE_CUDA
@@ -815,7 +857,8 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::collective_post(
         cuda_ev->record(at::cuda::getCurrentCUDAStream(dev.index()));
       }
       cuda_ev->block(*stream);
-      comm->enqueue_cuda_collective(std::move(data), work, coll, team, cuda_ee);
+      comm->enqueue_cuda_collective(std::move(data), work, coll, team, cuda_ee,
+                                    &eps, rank_, comm_id);
       cuda_ev->record(*stream);
       work->fence = std::move(cuda_ev);
       work->ep = &ep;

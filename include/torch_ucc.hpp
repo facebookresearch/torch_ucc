@@ -120,6 +120,7 @@ class ProcessGroupUCC : public ProcessGroup {
     std::exception_ptr eptr_;
     std::vector<ucp_ep_h> *eps;
     int rank;
+    int comm_id;
   };
 
   class WorkUCC : public ProcessGroup::Work {
@@ -303,7 +304,7 @@ class CommPG {
   bool stop_progress_loop;
   bool collective_inprogress;
 
-  void check_communicator_status(int my_rank, uint64_t seq_num,
+  void check_communicator_status(int my_rank, int comm_id, uint64_t seq_num,
       std::vector<ucp_ep_h> *eps);
  public:
   c10::DeviceIndex cuda_device_index;
@@ -337,7 +338,11 @@ class CommPG {
       c10::intrusive_ptr<ProcessGroupUCC::WorkUCC> work,
       ucc_coll_args_t& coll,
       ucc_team_h team,
-      ucc_ee_h ee);
+      ucc_ee_h ee,
+      std::vector<ucp_ep_h> *eps,
+      int rank,
+      int comm_id);
+
 #endif
 
   void enqueue_collective(
@@ -346,7 +351,8 @@ class CommPG {
       ucc_coll_args_t& coll,
       ucc_team_h team,
       std::vector<ucp_ep_h> *eps,
-      int rank);
+      int rank,
+      int comm_id);
 
   static std::shared_ptr<CommPG> get_comm(
       uint32_t& id,

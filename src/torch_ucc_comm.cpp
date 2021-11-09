@@ -25,6 +25,8 @@ const char *torch_ucc_rank_state_string(torch_ucc_rank_state_t state)
         return "Collective timeout was triggered";
     case TORCH_UCC_RANK_STATE_COLLECTIVE_DONE:
         return "Collective was finished";
+    case TORCH_UCC_RANK_STATE_DEVICE_ERROR:
+        return "Device error";
     default:
         return "Unknown state";
     };
@@ -73,15 +75,8 @@ CommUCX::CommUCX(
 }
 
 void CommUCX::set_am_recv_handler(const ucp_am_handler_param_t *params) {
-  ucs_status_t st;
-
-  st = ucp_worker_set_am_recv_handler(worker, params);
-  if (st != UCS_OK) {
-    logger->logError(
-        TORCH_UCC_INIT,
-        c10::str("UCX failed to set am handler:", ucs_status_string(st)));
-    throw std::runtime_error(ucs_status_string(st));
-  }
+  TORCH_UCX_CHECK(ucp_worker_set_am_recv_handler(worker, params),
+    "UCX failed to set am handler");
 }
 
 void CommUCX::progress() {
