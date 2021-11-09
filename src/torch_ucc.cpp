@@ -183,6 +183,10 @@ c10::intrusive_ptr<c10::ivalue::Future> ProcessGroupUCC::WorkUCC::getFuture() {
   return future_;
 }
 
+std::vector<at::Tensor> ProcessGroupUCC::WorkUCC::result() {
+  return *outputs_;
+}
+
 void ProcessGroupUCC::ProgressEntry::finalize(std::exception_ptr eptr) {
   ucc_status_t status = UCC_OK;
 
@@ -634,6 +638,9 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::collective_post(
   auto work =
       c10::make_intrusive<ProcessGroupUCC::WorkUCC>(
           opType, torch_ucc_config.enable_profiling ? prof_title : nullptr);
+
+  // Store references to outputs to be used by result
+  work->outputs_ = std::make_shared<std::vector<at::Tensor>>(outputTensors);
 
   switch (dev.type()) {
     case c10::DeviceType::CPU: {

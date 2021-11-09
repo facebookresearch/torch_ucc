@@ -174,6 +174,7 @@ class ProcessGroupUCC : public ProcessGroup {
     bool isSuccess() const override;
     bool wait(std::chrono::milliseconds timeout = kUnsetTimeout) override;
     c10::intrusive_ptr<c10::ivalue::Future> getFuture() override;
+    std::vector<at::Tensor> result() override;
 #ifdef USE_CUDA
     std::unique_ptr<at::cuda::CUDAEvent> fence = nullptr;
     event_pool_t* ep = nullptr;
@@ -183,6 +184,8 @@ class ProcessGroupUCC : public ProcessGroup {
    private:
     // The future returned by getFuture.
     c10::intrusive_ptr<at::ivalue::Future> future_;
+    // Store a reference to collective's outputs, used by result
+    std::shared_ptr<std::vector<at::Tensor>> outputs_;
   };
 
 
