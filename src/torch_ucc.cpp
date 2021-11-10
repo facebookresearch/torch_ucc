@@ -92,6 +92,11 @@ void read_confg() {
     torch_ucc_config.blocking_wait[(std::uint8_t)OpType::BROADCAST] =
         std::atoi(env);
   }
+  env = std::getenv("TORCH_UCC_REDUCE_SCATTER_BLOCKING_WAIT");
+  if (env) {
+    torch_ucc_config.blocking_wait[(std::uint8_t)OpType::REDUCE_SCATTER] =
+        std::atoi(env);
+  }
   env = std::getenv("TORCH_UCC_USE_FUTURE");
   if (env) {
     torch_ucc_config.use_future = !!std::atoi(env);
@@ -627,13 +632,37 @@ void ProcessGroupUCC::set_timeout(ucc_coll_args_t &args)
   args.timeout = timeout_.count();
 }
 
+#ifdef USE_CUDA
+std::unique_ptr<at::cuda::CUDAEvent> ProcessGroupUCC::getPooledEvent() {
+	std::unique_ptr<at::cuda::CUDAEvent> ev;
+	std::lock_guard<std::mutex> lock(ep.event_pool_mutex);
+	if (ep.event_pool.empty()) {
+		ev = std::make_unique<at::cuda::CUDAEvent>();
+	} else {
+		ev = std::move(ep.event_pool.front());
+		ep.event_pool.pop();
+	}
+	return ev;
+}
+#endif
+
 c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::collective_post(
     OpType opType,
     ucc_coll_args_t& coll,
     std::unique_ptr<ProcessGroupUCC::WorkData> data,
     c10::Device dev,
     std::vector<at::Tensor> &outputTensors,
-    const char* prof_title) {
+    const char* prof_title
+// pass a event on which a record was started for this device
+// eg when a copy is done
+// syncrhonize between the device stream and internal stream
+// using this event
+// if the event is null, then a record will be started on this
+// device
+#ifdef USE_CUDA
+		, std::unique_ptr<at::cuda::CUDAEvent> cuda_ev
+#endif
+	) {
   set_timeout(coll);
   auto work =
       c10::make_intrusive<ProcessGroupUCC::WorkUCC>(
@@ -653,17 +682,10 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::collective_post(
     }
 #ifdef USE_CUDA
     case c10::DeviceType::CUDA: {
-      std::unique_ptr<at::cuda::CUDAEvent> cuda_ev;
-      {
-        std::lock_guard<std::mutex> lock(ep.event_pool_mutex);
-        if (ep.event_pool.empty()) {
-          cuda_ev = std::make_unique<at::cuda::CUDAEvent>();
-        } else {
-          cuda_ev = std::move(ep.event_pool.front());
-          ep.event_pool.pop();
-        }
+      if (cuda_ev == nullptr) {
+				cuda_ev = getPooledEvent();
+        cuda_ev->record(at::cuda::getCurrentCUDAStream(dev.index()));
       }
-      cuda_ev->record(at::cuda::getCurrentCUDAStream(dev.index()));
       cuda_ev->block(*stream);
       comm->enqueue_cuda_collective(std::move(data), work, coll, team, cuda_ee);
       cuda_ev->record(*stream);
@@ -938,10 +960,105 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::reduce(
 }
 
 c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::reduce_scatter(
-    std::vector<at::Tensor>& /* unused */,
-    std::vector<std::vector<at::Tensor>>& /* unused */,
-    const ReduceScatterOptions& /* unused */) {
-  throw std::runtime_error("ProcessGroupUCC does not support reduce_scatter");
+    std::vector<at::Tensor>& outputTensors,
+    std::vector<std::vector<at::Tensor>>& inputTensors,
+    const ReduceScatterOptions& opts) {
+	TORCH_CHECK(
+		(outputTensors.size() == inputTensors.size()),
+		"Tensor input/output list for reduce_scatter must have same size");
+	check_tensor(outputTensors);
+	check_device(inputTensors[0][0].device(), outputTensors[0].device());
+	initComm(inputTensors[0][0].device());
+
+	auto isize = inputTensors.size();
+  auto data = std::make_unique<WorkData>();
+	std::vector<at::Tensor> flat_input;
+	flat_input.resize(isize);
+	bool isCuda = false;
+#ifdef USE_CUDA
+	isCuda = inputTensors[0][0].device().is_cuda();
+	std::unique_ptr<at::cuda::CUDAEvent> ev = nullptr;
+	if (isCuda) {
+		ev = getPooledEvent();
+		auto sr = at::cuda::getCurrentCUDAStream(
+					inputTensors[0][0].device().index());
+		// mark and wait for inputTensors to be ready
+    ev->record(sr);
+		ev->block(*stream);
+	}
+	// switch to internal stream for copy
+	at::cuda::CUDAStreamGuard guard(*stream);
+#endif
+  for (size_t i = 0; i < isize; i++) {
+		TORCH_CHECK((inputTensors[i].size() == isize * size_),
+			"Tensor input list is not valid for the number of participants");
+		auto onumel = outputTensors[i].numel();
+		flat_input[i] = c10d::newLikeFlat(inputTensors, i);
+		for (size_t j = 0; j < inputTensors[i].size(); j++) {
+    	TORCH_CHECK(
+				(inputTensors[i][j].numel() == onumel),
+				"Tensor operand counts must be same");
+#ifdef USE_CUDA
+			if (isCuda) {
+				c10::cuda::CUDACachingAllocator::recordStream(
+					inputTensors[i][j].storage().data_ptr(), (*stream));
+				flat_input[i][j].copy_(inputTensors[i][j], true);
+			} else
+#endif
+			{
+				flat_input[i][j].copy_(inputTensors[i][j], false);
+			}
+		}
+#ifdef USE_CUDA
+		if (isCuda) {
+			c10::cuda::CUDACachingAllocator::recordStream(
+				outputTensors[i].storage().data_ptr(), (*stream));
+		}
+#endif
+  }
+	check_tensor(flat_input);
+  ucc_coll_args_t coll;
+  coll.mask = UCC_COLL_ARGS_FIELD_PREDEFINED_REDUCTIONS;
+  coll.flags = 0;
+  coll.coll_type = UCC_COLL_TYPE_REDUCE_SCATTER;
+	coll.reduce.predefined_op = ucc_op_map.at(opts.reduceOp);
+
+  coll.src.info.buffer = flat_input[0].data_ptr();
+  coll.src.info.count = flat_input[0].numel();
+  coll.src.info.datatype = ucc_dtype_map.at(flat_input[0].scalar_type());
+  coll.src.info.mem_type = to_ucc_memType(flat_input[0].device().type());
+  coll.dst.info.buffer = outputTensors[0].data_ptr();
+  coll.dst.info.count = outputTensors[0].numel();
+  coll.dst.info.datatype = ucc_dtype_map.at(outputTensors[0].scalar_type());
+  coll.dst.info.mem_type = to_ucc_memType(outputTensors[0].device().type());
+
+	if (!isCuda) {
+  	SAVE_TENSORS(inputTensors[0], data->src);
+  	SAVE_TENSORS(outputTensors, data->dst);
+	}
+
+#ifdef USE_CUDA
+	if (isCuda) {
+		// reset the stream to original
+		guard.reset_stream(guard.original_stream());
+	}
+  return collective_post(
+    	OpType::REDUCE_SCATTER,
+    	coll,
+    	std::move(data),
+    	flat_input[0].device(),
+    	outputTensors,
+    	"ucc:reduce_scatter",
+			std::move(ev));
+#else
+ return collective_post(
+    	OpType::REDUCE_SCATTER,
+    	coll,
+    	std::move(data),
+    	flat_input[0].device(),
+    	outputTensors,
+    	"ucc:reduce_scatter");
+#endif
 }
 
 c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::scatter(
