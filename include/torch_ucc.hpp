@@ -203,13 +203,28 @@ class ProcessGroupUCC : public ProcessGroup {
       return std::string(UCC_BACKEND_NAME);
   }
 
+#ifdef USE_CUDA
+	std::unique_ptr<at::cuda::CUDAEvent> getPooledEvent();
+#endif
+
   c10::intrusive_ptr<ProcessGroup::Work> collective_post(
       OpType opType,
       ucc_coll_args_t& coll,
       std::unique_ptr<ProcessGroupUCC::WorkData> data,
       c10::Device dev,
       std::vector<at::Tensor> &outputTensors,
-      const char* prof_title);
+      const char* prof_title
+// pass a event on which a record was started for this device
+// eg when a copy is done
+// syncrhonize between the device stream and internal stream
+// using this event
+// if the event is null, then a record will be started on this
+// device
+#ifdef USE_CUDA
+    , std::unique_ptr<at::cuda::CUDAEvent> cuda_ev
+        = std::unique_ptr<at::cuda::CUDAEvent>()
+#endif
+	);
 
   c10::intrusive_ptr<ProcessGroup::Work> broadcast(
       std::vector<at::Tensor>& data,
