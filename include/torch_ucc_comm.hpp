@@ -82,7 +82,16 @@ namespace c10d {
     }                                     \
   } while (0)
 
+// Macros to print logs with unified format
+#define TORCH_UCC_LOG_ERROR(_phase, _msg) \
+  LOG(ERROR) << logger->getLogPrefix(_phase) << "[ERROR] " << _msg;
+#define TORCH_UCC_LOG_INFO(_phase, _msg) \
+  LOG(INFO) << logger->getLogPrefix(_phase) << "[INFO] " << _msg;
+#define TORCH_UCC_LOG_DEBUG_phase, _msg)  \
+  VLOG(1) << logger->getLogPrefix(_phase) << "[DEBUG] " << _msg;
+
 enum torch_ucc_phase_t {
+  TORCH_UCC_UNKNOWN,
   TORCH_UCC_INIT,
   TORCH_UCC_READY,
   TORCH_UCC_COLL_POST,
@@ -91,6 +100,7 @@ enum torch_ucc_phase_t {
 };
 
 const std::map<torch_ucc_phase_t, std::string> ucc_phase_map = {
+    {TORCH_UCC_UNKNOWN, "UNKNOWN"},
     {TORCH_UCC_INIT, "INIT"},
     {TORCH_UCC_READY, "READY"},
     {TORCH_UCC_COLL_POST, "COLL_POST"},
@@ -101,24 +111,17 @@ const std::map<torch_ucc_phase_t, std::string> ucc_phase_map = {
 class TORCH_API ProcessGroupUCCLogger : public torch::CustomClassHolder {
  public:
   ProcessGroupUCCLogger();
-  ProcessGroupUCCLogger(std::string log_prefix);
+  ProcessGroupUCCLogger(std::string log_prefix, torch_ucc_phase_t phase);
 
-  std::string getLogPrefix();
+  std::string getLogPrefix(torch_ucc_phase_t phase = TORCH_UCC_UNKNOWN);
   void setLogPrefix(std::string log_prefix);
-  inline void logInfo(torch_ucc_phase_t phase, std::string msg) {
-    LOG(INFO) << getLogPrefix() << "[" << ucc_phase_map.at(phase) << "]"
-              << "[INFO] " << msg;
+  inline void setPhase(torch_ucc_phase_t phase) {
+    local_phase = phase;
   }
-  inline void logDebug(torch_ucc_phase_t phase, std::string msg) {
-    LOG(INFO) << getLogPrefix() << "[" << ucc_phase_map.at(phase) << "]"
-                 << "[DEBUG] " << msg;
-  }
-  inline void logError(torch_ucc_phase_t phase, std::string msg) {
-    LOG(ERROR) << getLogPrefix() << "[" << ucc_phase_map.at(phase) << "]"
-               << "[ERROR] " << msg;
-  }
-protected:
+
+ protected:
   std::string log_prefix;
+  torch_ucc_phase_t local_phase = TORCH_UCC_UNKNOWN;
 };
 
 struct torch_ucc_oob_coll_info_t {
@@ -129,14 +132,14 @@ struct torch_ucc_oob_coll_info_t {
   void* rbuf;
   size_t msglen;
   std::string getKey(std::string key) {
-    return std::to_string(comm_id)+key;
+    return std::to_string(comm_id) + key;
   }
 };
 
 class CommBase {
  public:
   CommBase(const c10::intrusive_ptr<ProcessGroupUCCLogger>& logger_)
-    : logger(logger_) {}
+      : logger(logger_) {}
   virtual void progress() = 0;
   virtual void free_request(ucc_coll_req_h request) = 0;
   virtual ~CommBase() {}
@@ -145,24 +148,28 @@ class CommBase {
 
 class CommUCX : public CommBase {
  public:
-  ucp_context_h context {nullptr};
-  ucp_worker_h worker {nullptr};
+  ucp_context_h context{nullptr};
+  ucp_worker_h worker{nullptr};
 
  public:
   void progress() override;
   void free_request(ucc_coll_req_h request) override;
-  CommUCX(int comm_size, const c10::intrusive_ptr<ProcessGroupUCCLogger>& logger);
+  CommUCX(
+      int comm_size,
+      const c10::intrusive_ptr<ProcessGroupUCCLogger>& logger);
   ~CommUCX();
 };
 
 class CommUCC : public CommBase {
  public:
-  ucc_lib_h lib {nullptr};
-  ucc_context_h context {nullptr};
+  ucc_lib_h lib{nullptr};
+  ucc_context_h context{nullptr};
 
  public:
   void progress() override;
-  CommUCC(torch_ucc_oob_coll_info_t* oob_info, const c10::intrusive_ptr<ProcessGroupUCCLogger>& logger);
+  CommUCC(
+      torch_ucc_oob_coll_info_t* oob_info,
+      const c10::intrusive_ptr<ProcessGroupUCCLogger>& logger);
   void free_request(ucc_coll_req_h request) override;
   ~CommUCC();
 };
@@ -177,6 +184,5 @@ ucc_status_t oob_allgather(
 ucc_status_t oob_allgather_test(void* req);
 
 ucc_status_t oob_allgather_free(void* req);
-
 
 } // namespace c10d
