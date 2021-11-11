@@ -93,7 +93,7 @@ namespace c10d {
 #define SAVE_TENSORS(_TENSORS, _DATA) (_DATA) = (_TENSORS);
 #endif
 
-constexpr const char* UCC_BACKEND_NAME = "UCC";
+constexpr const char* UCC_BACKEND_NAME = "ucc";
 
 enum torch_ucx_tag_type_t { TORCH_UCX_P2P_TAG, TORCH_UCX_OOB_TAG };
 
