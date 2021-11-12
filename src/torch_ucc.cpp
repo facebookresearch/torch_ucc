@@ -92,6 +92,11 @@ void read_confg() {
     torch_ucc_config.blocking_wait[(std::uint8_t)OpType::BROADCAST] =
         std::atoi(env);
   }
+  env = std::getenv("TORCH_UCC_REDUCE_SCATTER_BLOCKING_WAIT");
+  if (env) {
+    torch_ucc_config.blocking_wait[(std::uint8_t)OpType::REDUCE_SCATTER] =
+        std::atoi(env);
+  }
   env = std::getenv("TORCH_UCC_USE_FUTURE");
   if (env) {
     torch_ucc_config.use_future = !!std::atoi(env);
@@ -189,6 +194,10 @@ c10::intrusive_ptr<c10::ivalue::Future> ProcessGroupUCC::WorkUCC::getFuture() {
   return future_;
 }
 
+std::vector<at::Tensor> ProcessGroupUCC::WorkUCC::result() {
+  return *outputs_;
+}
+
 void ProcessGroupUCC::ProgressEntry::finalize(std::exception_ptr eptr) {
   ucc_status_t status = UCC_OK;
 
@@ -216,8 +225,8 @@ CommPG::CommPG(
     torch_ucc_oob_coll_info_t* oob_info,
     c10::Device dev)
     : logger(logger_),
-			ucx_comm(oob_info->size, logger),
-			ucc_comm(oob_info, logger),
+      ucx_comm(oob_info->size, logger),
+      ucc_comm(oob_info, logger),
       cuda_device_index(TORCH_UCC_DEVICE_NOT_SET) {
   if (dev.is_cuda()) {
     cuda_device_index = dev.index();
@@ -271,14 +280,13 @@ std::shared_ptr<CommPG> CommPG::get_comm(
   comm_id = oob->comm_id + 1;
   std::shared_ptr<CommPG> shared_comm = comm.lock();
   if (!shared_comm) {
-    shared_comm = std::make_shared<CommPG>(
-        logger, oob, dev);
+    shared_comm = std::make_shared<CommPG>(logger, oob, dev);
     comm = shared_comm;
   } else {
     if (dev.is_cuda()) {
       if ((shared_comm->cuda_device_index != TORCH_UCC_DEVICE_NOT_SET) &&
           (shared_comm->cuda_device_index != dev.index())) {
-        logger->logError(
+        TORCH_UCC_LOG_ERROR(
             TORCH_UCC_INIT,
             "ucc communicator was initialized with different cuda device, multi device is not supported");
         throw std::runtime_error(ucc_status_string(UCC_ERR_NOT_SUPPORTED));
@@ -312,8 +320,8 @@ void CommPG::ucx_connect_eps(
     ep_params.field_mask = UCP_EP_PARAM_FIELD_REMOTE_ADDRESS;
     ep_params.address = reinterpret_cast<ucp_address_t*>(peer_addr.data());
     TORCH_UCX_CHECK(
-      ucp_ep_create(ucx_comm.worker, &ep_params, &(eps[i])),
-      c10::str("failed to create endpoint with rank ", i));
+        ucp_ep_create(ucx_comm.worker, &ep_params, &(eps[i])),
+        c10::str("failed to create endpoint with rank ", i));
   }
 }
 
@@ -325,7 +333,9 @@ void CommPG::ucx_disconnect_eps(
   for (ucp_ep_h& ep : eps) {
     ucs_status_ptr_t close_req = ucp_ep_close_nb(ep, UCP_EP_CLOSE_MODE_FLUSH);
     if (UCS_PTR_IS_ERR(close_req)) {
-      logger->logError(TORCH_UCC_FINALIZE, "failed to close endpoint, ignore and continue...");
+      TORCH_UCC_LOG_ERROR(
+          TORCH_UCC_FINALIZE,
+          "failed to close endpoint, ignore and continue...");
       return;
     }
     if (UCS_PTR_IS_PTR(close_req)) {
@@ -336,20 +346,20 @@ void CommPG::ucx_disconnect_eps(
       ucp_request_free(close_req);
     }
   }
-	if (!eps.size()) {
-		return;
-	}
-	try {
-		auto sz = (size_t)oob->store->add(oob->getKey("epclosed"), 1);
-  	while (sz != eps.size()) {
-    	ucp_worker_progress(ucx_comm.worker);
-    	std::this_thread::sleep_for(std::chrono::milliseconds(kBusyWaitMillis));
-			sz = (size_t)oob->store->add(oob->getKey("epclosed"), 0);
-  	}
-	} catch (std::exception& ex) {
-		LOG(ERROR) << "(disconnect_eps) Caught error in Store Operation .. "
-							 << "[" << ex.what() << "]";
-	}
+  if (!eps.size()) {
+    return;
+  }
+  try {
+    auto sz = (size_t)oob->store->add(oob->getKey("epclosed"), 1);
+    while (sz != eps.size()) {
+      ucp_worker_progress(ucx_comm.worker);
+      std::this_thread::sleep_for(std::chrono::milliseconds(kBusyWaitMillis));
+      sz = (size_t)oob->store->add(oob->getKey("epclosed"), 0);
+    }
+  } catch (std::exception& ex) {
+    LOG(ERROR) << "(disconnect_eps) Caught error in Store Operation .. "
+               << "[" << ex.what() << "]";
+  }
 }
 
 ucc_coll_req_h CommPG::send_nb(
@@ -369,7 +379,7 @@ ucc_coll_req_h CommPG::send_nb(
   };
   st = ucp_tag_send_nbx(ep, data, 1, ucp_tag, &params);
   if (UCS_PTR_IS_ERR(st)) {
-    logger->logError(
+    TORCH_UCC_LOG_ERROR(
         TORCH_UCC_COLL_POST,
         c10::str(
             "failed to send message: ", ucs_status_string(UCS_PTR_STATUS(st))));
@@ -399,7 +409,7 @@ ucc_coll_req_h CommPG::recv_nb(
   st = ucp_tag_recv_nbx(
       ucx_comm.worker, data, 1, ucp_tag, ucp_tag_mask, &params);
   if (UCS_PTR_IS_ERR(st)) {
-    logger->logError(
+    TORCH_UCC_LOG_ERROR(
         TORCH_UCC_COLL_POST,
         c10::str(
             "failed to recv message: ", ucs_status_string(UCS_PTR_STATUS(st))));
@@ -441,7 +451,9 @@ void CommPG::ucc_destroy_team(ucc_team_h& team) {
   ucc_status_t status;
   while (UCC_INPROGRESS == (status = ucc_team_destroy(team))) {
     if (UCC_OK != status) {
-      logger->logError(TORCH_UCC_FINALIZE, c10::str("ucc team destroy error: ", ucc_status_string(status)));
+      TORCH_UCC_LOG_ERROR(
+          TORCH_UCC_FINALIZE,
+          c10::str("ucc team destroy error: ", ucc_status_string(status)));
       break;
     }
   }
@@ -453,8 +465,7 @@ c10::intrusive_ptr<ProcessGroup::Work> CommPG::enqueue_p2p(
     OpType opType,
     ucc_coll_req_h request,
     const char* prof_title) {
-  auto work = c10::make_intrusive<ProcessGroupUCC::WorkUCC>(
-      opType, prof_title);
+  auto work = c10::make_intrusive<ProcessGroupUCC::WorkUCC>(opType, prof_title);
   if (torch_ucc_config.use_future) {
     work->future_ = c10::make_intrusive<at::ivalue::Future>(
         c10::ListType::create(c10::TensorType::get()));
@@ -467,8 +478,8 @@ c10::intrusive_ptr<ProcessGroup::Work> CommPG::enqueue_p2p(
     }
     return work;
   }
-  auto entry = std::make_shared<ProcessGroupUCC::ProgressEntry>(
-      &ucx_comm, request);
+  auto entry =
+      std::make_shared<ProcessGroupUCC::ProgressEntry>(&ucx_comm, request);
   work->entry_ = entry;
   std::unique_lock<std::mutex> lock(mutex);
   progress_queue.push_back(entry);
@@ -561,10 +572,10 @@ void CommPG::progress_loop() {
         eptr = std::make_exception_ptr(
             std::runtime_error(ucc_status_string(work->request_->status)));
         std::string err_log = c10::str(
-          "Failed to progress communication", // TODO: report exact op type or id?
-          ucc_status_string(work->request_->status)
-        );
-        logger->logError(TORCH_UCC_COLL_PROGRESS, err_log);
+            "Failed to progress communication", // TODO: report exact op type or
+                                                // id?
+            ucc_status_string(work->request_->status));
+        TORCH_UCC_LOG_ERROR(TORCH_UCC_COLL_PROGRESS, err_log);
       }
     } catch (...) {
       eptr = std::current_exception();
@@ -593,41 +604,61 @@ ProcessGroupUCC::ProcessGroupUCC(
   uint32_t pg_id = (id++ % TORCH_UCX_MAX_COMM);
 
   logger = c10::make_intrusive<ProcessGroupUCCLogger>(
-      c10::str("[Rank ", rank_, "]", "[ProcessGroupUCC-", pg_id, "]"));
-  logger->logInfo(TORCH_UCC_INIT, "Successfully read and set ProcessGroupUCC env. variables");
+      c10::str("[Rank ", rank_, "]", "[ProcessGroupUCC-", pg_id, "]"),
+      TORCH_UCC_INIT);
+  TORCH_UCC_LOG_INFO(
+      TORCH_UCC_INIT,
+      "Successfully read and set ProcessGroupUCC env. variables");
   // TODO: print log of all env. variables and their values
 }
 
 ProcessGroupUCC::~ProcessGroupUCC() {
   if (comm) {
+    logger->setPhase(TORCH_UCC_FINALIZE);
     comm->ucc_destroy_team(team);
-    logger->logInfo(TORCH_UCC_FINALIZE, "Successfully destoryed UCC library");
+    TORCH_UCC_LOG_INFO(
+        TORCH_UCC_FINALIZE, "Successfully destroyed UCC library");
     comm->ucx_disconnect_eps(eps, &oob);
-    logger->logInfo(TORCH_UCC_FINALIZE, "Successfully destoryed UCX library");
-		try {
-    	if (cuda_ee) {
-      	ucc_ee_destroy(cuda_ee);
-    	}
-    	if ((size_t)oob.store->add(oob.getKey("ucc_pg_closed"), 1) == eps.size()) {
-				std::vector<uint8_t> val = {1};
-      	oob.store->set(oob.getKey("ucc_pg_finished"), val);
-    	} else {
-      	oob.store->wait({oob.getKey("ucc_pg_finished")});
-    	}
-		} catch (std::exception& ex) {
-			LOG(ERROR) << "(~ProcessGroupUCC) Caught error in Store Operation .. "
-								 << "[" << ex.what() << "]";
-		}
+    TORCH_UCC_LOG_INFO(
+        TORCH_UCC_FINALIZE, "Successfully destroyed UCX library");
+    try {
+      if (cuda_ee) {
+        ucc_ee_destroy(cuda_ee);
+      }
+      if ((size_t)oob.store->add(oob.getKey("ucc_pg_closed"), 1) ==
+          eps.size()) {
+        std::vector<uint8_t> val = {1};
+        oob.store->set(oob.getKey("ucc_pg_finished"), val);
+      } else {
+        oob.store->wait({oob.getKey("ucc_pg_finished")});
+      }
+    } catch (std::exception& ex) {
+      LOG(ERROR) << "(~ProcessGroupUCC) Caught error in Store Operation .. "
+                 << "[" << ex.what() << "]";
+    }
     comm = nullptr;
   }
 }
 
-void ProcessGroupUCC::set_timeout(ucc_coll_args_t &args)
-{
+void ProcessGroupUCC::set_timeout(ucc_coll_args_t& args) {
   args.mask |= UCC_COLL_ARGS_FIELD_FLAGS;
   args.flags |= UCC_COLL_ARGS_FLAG_TIMEOUT;
   args.timeout = timeout_.count();
 }
+
+#ifdef USE_CUDA
+std::unique_ptr<at::cuda::CUDAEvent> ProcessGroupUCC::getPooledEvent() {
+	std::unique_ptr<at::cuda::CUDAEvent> ev;
+	std::lock_guard<std::mutex> lock(ep.event_pool_mutex);
+	if (ep.event_pool.empty()) {
+		ev = std::make_unique<at::cuda::CUDAEvent>();
+	} else {
+		ev = std::move(ep.event_pool.front());
+		ep.event_pool.pop();
+	}
+	return ev;
+}
+#endif
 
 c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::collective_post(
     OpType opType,
@@ -635,11 +666,23 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::collective_post(
     std::unique_ptr<ProcessGroupUCC::WorkData> data,
     c10::Device dev,
     std::vector<at::Tensor> &outputTensors,
-    const char* prof_title) {
+    const char* prof_title
+// pass a event on which a record was started for this device
+// eg when a copy is done
+// syncrhonize between the device stream and internal stream
+// using this event
+// if the event is null, then a record will be started on this
+// device
+#ifdef USE_CUDA
+		, std::unique_ptr<at::cuda::CUDAEvent> cuda_ev
+#endif
+	) {
   set_timeout(coll);
-  auto work =
-      c10::make_intrusive<ProcessGroupUCC::WorkUCC>(
-          opType, torch_ucc_config.enable_profiling ? prof_title : nullptr);
+  auto work = c10::make_intrusive<ProcessGroupUCC::WorkUCC>(
+      opType, torch_ucc_config.enable_profiling ? prof_title : nullptr);
+
+  // Store references to outputs to be used by result
+  work->outputs_ = std::make_shared<std::vector<at::Tensor>>(outputTensors);
 
   switch (dev.type()) {
     case c10::DeviceType::CPU: {
@@ -652,17 +695,10 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::collective_post(
     }
 #ifdef USE_CUDA
     case c10::DeviceType::CUDA: {
-      std::unique_ptr<at::cuda::CUDAEvent> cuda_ev;
-      {
-        std::lock_guard<std::mutex> lock(ep.event_pool_mutex);
-        if (ep.event_pool.empty()) {
-          cuda_ev = std::make_unique<at::cuda::CUDAEvent>();
-        } else {
-          cuda_ev = std::move(ep.event_pool.front());
-          ep.event_pool.pop();
-        }
+      if (cuda_ev == nullptr) {
+				cuda_ev = getPooledEvent();
+        cuda_ev->record(at::cuda::getCurrentCUDAStream(dev.index()));
       }
-      cuda_ev->record(at::cuda::getCurrentCUDAStream(dev.index()));
       cuda_ev->block(*stream);
       comm->enqueue_cuda_collective(std::move(data), work, coll, team, cuda_ee);
       cuda_ev->record(*stream);
@@ -686,7 +722,8 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::collective_post(
     }
 #endif // #ifdef USE_CUDA
     default: {
-      logger->logError(TORCH_UCC_COLL_POST, c10::str("unsupported device type ", dev.str()));
+      TORCH_UCC_LOG_ERROR(
+          TORCH_UCC_COLL_POST, c10::str("unsupported device type ", dev.str()));
       throw std::runtime_error(ucc_status_string(UCC_ERR_NOT_SUPPORTED));
     }
   }
@@ -759,8 +796,8 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::allreduce(
   WorkData* data = new WorkData();
 
   ucc_coll_args_t coll;
-  coll.mask = UCC_COLL_ARGS_FIELD_PREDEFINED_REDUCTIONS |
-              UCC_COLL_ARGS_FIELD_FLAGS;
+  coll.mask =
+      UCC_COLL_ARGS_FIELD_PREDEFINED_REDUCTIONS | UCC_COLL_ARGS_FIELD_FLAGS;
   coll.flags = UCC_COLL_ARGS_FLAG_IN_PLACE;
   coll.coll_type = UCC_COLL_TYPE_ALLREDUCE;
   coll.reduce.predefined_op = ucc_op_map.at(opts.reduceOp);
@@ -822,13 +859,11 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::alltoall_base(
     coll.mask = 0;
     coll.coll_type = UCC_COLL_TYPE_ALLTOALL;
     coll.src.info.buffer = inputTensor.data_ptr();
-    coll.src.info.count =
-        inputTensor.element_size() * inputTensor.numel();
+    coll.src.info.count = inputTensor.element_size() * inputTensor.numel();
     coll.src.info.datatype = UCC_DT_UINT8;
     coll.src.info.mem_type = to_ucc_memType(inputTensor.device().type());
     coll.dst.info.buffer = outputTensor.data_ptr();
-    coll.dst.info.count =
-        outputTensor.element_size() * outputTensor.numel();
+    coll.dst.info.count = outputTensor.element_size() * outputTensor.numel();
     coll.dst.info.datatype = UCC_DT_UINT8;
     coll.dst.info.mem_type = to_ucc_memType(outputTensor.device().type());
     coll.flags = 0;
@@ -856,7 +891,7 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::alltoall_base(
     coll.dst.info_v.datatype = ucc_dtype_map.at(outputTensor.scalar_type());
     coll.dst.info_v.mem_type = to_ucc_memType(outputTensor.device().type());
     coll.flags = UCC_COLL_ARGS_FLAG_CONTIG_SRC_BUFFER |
-                 UCC_COLL_ARGS_FLAG_CONTIG_DST_BUFFER;
+        UCC_COLL_ARGS_FLAG_CONTIG_DST_BUFFER;
   }
   std::vector<at::Tensor> inputTensors = {inputTensor};
   std::vector<at::Tensor> outputTensors = {outputTensor};
@@ -892,7 +927,7 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::barrier(
     if (0 == (int)deviceIdx) {
       deviceIdx = static_cast<int8_t>(this->getRank() % numGPUs);
     }
-    logger->logInfo(
+    TORCH_UCC_LOG_INFO(
         TORCH_UCC_COLL_POST,
         c10::str(
             "post barrier before specifying any GPU while there are ",
@@ -964,10 +999,105 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::reduce(
 }
 
 c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::reduce_scatter(
-    std::vector<at::Tensor>& /* unused */,
-    std::vector<std::vector<at::Tensor>>& /* unused */,
-    const ReduceScatterOptions& /* unused */) {
-  throw std::runtime_error("ProcessGroupUCC does not support reduce_scatter");
+    std::vector<at::Tensor>& outputTensors,
+    std::vector<std::vector<at::Tensor>>& inputTensors,
+    const ReduceScatterOptions& opts) {
+	TORCH_CHECK(
+		(outputTensors.size() == inputTensors.size()),
+		"Tensor input/output list for reduce_scatter must have same size");
+	check_tensor(outputTensors);
+	check_device(inputTensors[0][0].device(), outputTensors[0].device());
+	initComm(inputTensors[0][0].device());
+
+	auto isize = inputTensors.size();
+  auto data = std::make_unique<WorkData>();
+	std::vector<at::Tensor> flat_input;
+	flat_input.resize(isize);
+	bool isCuda = false;
+#ifdef USE_CUDA
+	isCuda = inputTensors[0][0].device().is_cuda();
+	std::unique_ptr<at::cuda::CUDAEvent> ev = nullptr;
+	if (isCuda) {
+		ev = getPooledEvent();
+		auto sr = at::cuda::getCurrentCUDAStream(
+					inputTensors[0][0].device().index());
+		// mark and wait for inputTensors to be ready
+    ev->record(sr);
+		ev->block(*stream);
+	}
+	// switch to internal stream for copy
+	at::cuda::CUDAStreamGuard guard(*stream);
+#endif
+  for (size_t i = 0; i < isize; i++) {
+		TORCH_CHECK((inputTensors[i].size() == isize * size_),
+			"Tensor input list is not valid for the number of participants");
+		auto onumel = outputTensors[i].numel();
+		flat_input[i] = c10d::newLikeFlat(inputTensors, i);
+		for (size_t j = 0; j < inputTensors[i].size(); j++) {
+    	TORCH_CHECK(
+				(inputTensors[i][j].numel() == onumel),
+				"Tensor operand counts must be same");
+#ifdef USE_CUDA
+			if (isCuda) {
+				c10::cuda::CUDACachingAllocator::recordStream(
+					inputTensors[i][j].storage().data_ptr(), (*stream));
+				flat_input[i][j].copy_(inputTensors[i][j], true);
+			} else
+#endif
+			{
+				flat_input[i][j].copy_(inputTensors[i][j], false);
+			}
+		}
+#ifdef USE_CUDA
+		if (isCuda) {
+			c10::cuda::CUDACachingAllocator::recordStream(
+				outputTensors[i].storage().data_ptr(), (*stream));
+		}
+#endif
+  }
+	check_tensor(flat_input);
+  ucc_coll_args_t coll;
+  coll.mask = UCC_COLL_ARGS_FIELD_PREDEFINED_REDUCTIONS;
+  coll.flags = 0;
+  coll.coll_type = UCC_COLL_TYPE_REDUCE_SCATTER;
+	coll.reduce.predefined_op = ucc_op_map.at(opts.reduceOp);
+
+  coll.src.info.buffer = flat_input[0].data_ptr();
+  coll.src.info.count = flat_input[0].numel();
+  coll.src.info.datatype = ucc_dtype_map.at(flat_input[0].scalar_type());
+  coll.src.info.mem_type = to_ucc_memType(flat_input[0].device().type());
+  coll.dst.info.buffer = outputTensors[0].data_ptr();
+  coll.dst.info.count = outputTensors[0].numel();
+  coll.dst.info.datatype = ucc_dtype_map.at(outputTensors[0].scalar_type());
+  coll.dst.info.mem_type = to_ucc_memType(outputTensors[0].device().type());
+
+	if (!isCuda) {
+  	SAVE_TENSORS(inputTensors[0], data->src);
+  	SAVE_TENSORS(outputTensors, data->dst);
+	}
+
+#ifdef USE_CUDA
+	if (isCuda) {
+		// reset the stream to original
+		guard.reset_stream(guard.original_stream());
+	}
+  return collective_post(
+    	OpType::REDUCE_SCATTER,
+    	coll,
+    	std::move(data),
+    	flat_input[0].device(),
+    	outputTensors,
+    	"ucc:reduce_scatter",
+			std::move(ev));
+#else
+ return collective_post(
+    	OpType::REDUCE_SCATTER,
+    	coll,
+    	std::move(data),
+    	flat_input[0].device(),
+    	outputTensors,
+    	"ucc:reduce_scatter");
+#endif
 }
 
 c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::scatter(
@@ -1051,14 +1181,15 @@ void ProcessGroupUCC::initComm(c10::Device dev) {
 #endif
     comm = CommPG::get_comm(comm_id, dev, &oob, logger);
     comm->ucx_connect_eps(eps, &oob);
-    logger->logInfo(TORCH_UCC_INIT, "Successfully initialized UCX library");
+    TORCH_UCC_LOG_INFO(TORCH_UCC_INIT, "Successfully initialized UCX library");
     comm->ucc_create_team(team, &oob);
-    logger->logInfo(TORCH_UCC_INIT, "Successfully initialized UCC library");
+    TORCH_UCC_LOG_INFO(TORCH_UCC_INIT, "Successfully initialized UCC library");
+    logger->setPhase(TORCH_UCC_READY);
   } else {
     if (dev.is_cuda()) {
       if ((comm->cuda_device_index != TORCH_UCC_DEVICE_NOT_SET) &&
           (comm->cuda_device_index != dev.index())) {
-        logger->logError(
+        TORCH_UCC_LOG_ERROR(
             TORCH_UCC_INIT,
             "ucc communicator was initialized with different cuda device, multi device is not supported");
         throw std::runtime_error(ucc_status_string(UCC_ERR_NOT_SUPPORTED));

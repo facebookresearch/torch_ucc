@@ -93,7 +93,7 @@ namespace c10d {
 #define SAVE_TENSORS(_TENSORS, _DATA) (_DATA) = (_TENSORS);
 #endif
 
-constexpr const char* UCC_BACKEND_NAME = "UCC";
+constexpr const char* UCC_BACKEND_NAME = "ucc";
 
 enum torch_ucx_tag_type_t { TORCH_UCX_P2P_TAG, TORCH_UCX_OOB_TAG };
 
@@ -174,6 +174,7 @@ class ProcessGroupUCC : public ProcessGroup {
     bool isSuccess() const override;
     bool wait(std::chrono::milliseconds timeout = kUnsetTimeout) override;
     c10::intrusive_ptr<c10::ivalue::Future> getFuture() override;
+    std::vector<at::Tensor> result() override;
 #ifdef USE_CUDA
     std::unique_ptr<at::cuda::CUDAEvent> fence = nullptr;
     event_pool_t* ep = nullptr;
@@ -183,6 +184,8 @@ class ProcessGroupUCC : public ProcessGroup {
    private:
     // The future returned by getFuture.
     c10::intrusive_ptr<at::ivalue::Future> future_;
+    // Store a reference to collective's outputs, used by result
+    std::shared_ptr<std::vector<at::Tensor>> outputs_;
   };
 
 
@@ -200,13 +203,27 @@ class ProcessGroupUCC : public ProcessGroup {
       return std::string(UCC_BACKEND_NAME);
   }
 
+#ifdef USE_CUDA
+	std::unique_ptr<at::cuda::CUDAEvent> getPooledEvent();
+#endif
+
   c10::intrusive_ptr<ProcessGroup::Work> collective_post(
       OpType opType,
       ucc_coll_args_t& coll,
       std::unique_ptr<ProcessGroupUCC::WorkData> data,
       c10::Device dev,
       std::vector<at::Tensor> &outputTensors,
-      const char* prof_title);
+      const char* prof_title
+// pass a event on which a record was started for this device
+// eg when a copy is done
+// syncrhonize between the device stream and internal stream
+// using this event
+// if the event is null, then a record will be started on this
+// device
+#ifdef USE_CUDA
+    , std::unique_ptr<at::cuda::CUDAEvent> cuda_ev = nullptr
+#endif
+	);
 
   c10::intrusive_ptr<ProcessGroup::Work> broadcast(
       std::vector<at::Tensor>& data,
