@@ -7,7 +7,7 @@
 
 #!/bin/bash
 
-size=4
+size="${TORCH_UCC_TEST_SIZE:-4}"
 for i in $(seq 0 $(($size-1)))
 do
     OMPI_COMM_WORLD_LOCAL_RANK=$i OMPI_COMM_WORLD_RANK=$i OMPI_COMM_WORLD_SIZE=$size python $@ &
