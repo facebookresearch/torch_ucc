@@ -221,8 +221,7 @@ class ProcessGroupUCC : public ProcessGroup {
 // if the event is null, then a record will be started on this
 // device
 #ifdef USE_CUDA
-    , std::unique_ptr<at::cuda::CUDAEvent> cuda_ev
-        = std::unique_ptr<at::cuda::CUDAEvent>()
+    , std::unique_ptr<at::cuda::CUDAEvent> cuda_ev = nullptr
 #endif
 	);
 
