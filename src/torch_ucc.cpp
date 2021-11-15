@@ -235,7 +235,7 @@ ucs_status_t torch_ucc_timeout_am_cb(
     const ucp_am_recv_param_t *param) {
   torch_ucc_timeout_desc_t *dsc = (torch_ucc_timeout_desc_t*)header;
   CommPG *comm = (CommPG*)arg;
-  torch_ucc_rank_state_t state;
+  torch_ucc_rank_state_t * state = new torch_ucc_rank_state_t;
   ucp_request_param_t params;
   ucp_tag_t ucp_tag;
 
@@ -247,29 +247,29 @@ ucs_status_t torch_ucc_timeout_am_cb(
     int active;
     st = cuDeviceGet(&device, comm->cuda_device_index);
     if (st != CUDA_SUCCESS) {
-      state = TORCH_UCC_RANK_STATE_DEVICE_ERROR;
+      *state = TORCH_UCC_RANK_STATE_DEVICE_ERROR;
       goto send_response;
     }
     st = cuDevicePrimaryCtxGetState(device, &flags, &active);
     if (st != CUDA_SUCCESS || !active) {
-      state = TORCH_UCC_RANK_STATE_DEVICE_ERROR;
+      *state = TORCH_UCC_RANK_STATE_DEVICE_ERROR;
       goto send_response;
     }
   }
 #endif
 
-  state = TORCH_UCC_RANK_STATE_COLLECTIVE_NOT_POSTED;
+  *state = TORCH_UCC_RANK_STATE_COLLECTIVE_NOT_POSTED;
   if (comm->seq_num > dsc->seq_num) {
-    state = TORCH_UCC_RANK_STATE_COLLECTIVE_DONE;
+    *state = TORCH_UCC_RANK_STATE_COLLECTIVE_DONE;
     for (auto& entry : comm->progress_queue) {
       if (entry->seq_num_ == dsc->seq_num) {
         switch (entry->request_->status)
         {
         case UCC_ERR_TIMED_OUT:
-          state = TORCH_UCC_RANK_STATE_COLLECTIVE_TIMEOUT;
+          *state = TORCH_UCC_RANK_STATE_COLLECTIVE_TIMEOUT;
           break;
         default:
-          state = TORCH_UCC_RANK_STATE_COLLECTIVE_INPROGRESS;
+          *state = TORCH_UCC_RANK_STATE_COLLECTIVE_INPROGRESS;
         }
         break;
       }
@@ -279,12 +279,15 @@ ucs_status_t torch_ucc_timeout_am_cb(
 send_response:
   TORCH_UCX_MAKE_OOB_SEND_TAG(ucp_tag, 0, dsc->rank, dec->comm_id);
   params.op_attr_mask = UCP_OP_ATTR_FIELD_CALLBACK |
-      UCP_OP_ATTR_FIELD_DATATYPE;
+      UCP_OP_ATTR_FIELD_DATATYPE | UCP_OP_ATTR_FIELD_USER_DATA;
   params.datatype = ucp_dt_make_contig(sizeof(torch_ucc_rank_state_t));
+  params.user_data = (void*)state;
   params.cb.send = [](void* request, ucs_status_t status, void* user_data) {
+    torch_ucc_rank_state_t * state = (torch_ucc_rank_state_t*)user_data;
+    delete user_data;
     ucp_request_free(request);
   };
-  ucp_tag_send_nbx(param->reply_ep, &state, 1, ucp_tag, &params);
+  ucp_tag_send_nbx(param->reply_ep, state, 1, ucp_tag, &params);
   return UCS_OK;
 }
 
@@ -679,17 +682,37 @@ void CommPG::check_communicator_status(
     end = std::chrono::system_clock::now();
     ucx_comm.progress();
   }
+  std::map<torch_ucc_rank_state_t, std::vector<int> > state_res_;
   for (auto i = 0; i < (int)eps->size(); i++) {
     if (comm_state[i] != TORCH_UCC_RANK_STATE_COLLECTIVE_DONE) {
-        std::string err_log = c10::str(
-          "on rank ",
-          std::to_string(i),
-          " ",
-          torch_ucc_rank_state_string(comm_state[i])
-        );
-        logger->logError(TORCH_UCC_COMM_CHECK, err_log);
+      std::string err_log = c10::str(
+        "on rank ",
+        std::to_string(i),
+        ": ",
+        torch_ucc_rank_state_string(comm_state[i])
+      );
+      TORCH_UCC_LOG_ERROR(TORCH_UCC_COMM_CHECK, err_log);
+      if (comm_state[i] > TORCH_UCC_RANK_STATE_COLLECTIVE_DONE ||
+          comm_state[i] < TORCH_UCC_RANK_STATE_NOT_RESPONDIG) {
+        comm_state[i] = TORCH_UCC_RANK_STATE_UNKNOWN;
+      }
+    }
+    if (state_res_.find(comm_state[i]) == state_res_.end()) {
+        state_res_[comm_state[i]] = {i};
+    } else {
+        state_res_[comm_state[i]].push_back(i);
     }
   }
+  for (auto sr : state_res_) {
+    if (sr.first != TORCH_UCC_RANK_STATE_COLLECTIVE_DONE && sr.second.size() > 0) {
+      TORCH_UCC_LOG_ERROR(
+          TORCH_UCC_COMM_CHECK,
+          c10::str("Ranks are : ", torch_ucc_rank_state_string(sr.first),
+          " (", sr.first, "): ", sr.second));
+     }
+   }
+  TORCH_CHECK(false, c10::str(logger->getLogPrefix(),
+      "Aborting...some ranks might have issues as shown above"));
 }
 
 void CommPG::progress_loop() {

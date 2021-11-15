@@ -251,8 +251,8 @@ CommUCC::CommUCC(
 }
 
 void CommUCC::progress() {
-  TORCH_UCC_CHECK(
-      ucc_context_progress(context), "failed to progress UCC collective");
+  /* skip TORCH_UCC_CHECK to catch non-critical error, e.g., TIMEOUT */
+  ucc_context_progress(context);
 }
 
 void CommUCC::free_request(ucc_coll_req_h request) {
