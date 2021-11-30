@@ -797,11 +797,10 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::allreduce(
   WorkData* data = new WorkData();
 
   ucc_coll_args_t coll;
-  coll.mask =
-      UCC_COLL_ARGS_FIELD_PREDEFINED_REDUCTIONS | UCC_COLL_ARGS_FIELD_FLAGS;
+  coll.mask = UCC_COLL_ARGS_FIELD_FLAGS;
   coll.flags = UCC_COLL_ARGS_FLAG_IN_PLACE;
   coll.coll_type = UCC_COLL_TYPE_ALLREDUCE;
-  coll.reduce.predefined_op = ucc_op_map.at(opts.reduceOp);
+  coll.op = ucc_op_map.at(opts.reduceOp);
   coll.src.info.buffer = nullptr;
   coll.src.info.count = tensor.numel();
   coll.src.info.datatype = ucc_dtype_map.at(tensor.scalar_type());
@@ -1058,10 +1057,10 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::reduce_scatter(
   }
 	check_tensor(flat_input);
   ucc_coll_args_t coll;
-  coll.mask = UCC_COLL_ARGS_FIELD_PREDEFINED_REDUCTIONS;
+  coll.mask = 0;
   coll.flags = 0;
   coll.coll_type = UCC_COLL_TYPE_REDUCE_SCATTER;
-	coll.reduce.predefined_op = ucc_op_map.at(opts.reduceOp);
+	coll.op = ucc_op_map.at(opts.reduceOp);
 
   coll.src.info.buffer = flat_input[0].data_ptr();
   coll.src.info.count = flat_input[0].numel();
