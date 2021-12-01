@@ -776,7 +776,7 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::allgather(
         std::unique_ptr<WorkData>(data),
         tensor.device(),
         outputTensors[0],
-        "ucc:allgather");
+        "ucc:allgatherv");
   } else {
     WorkData* data = new WorkData();
     std::vector<at::Tensor> flat_output(outputTensors.size());
@@ -791,12 +791,12 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::allgather(
     coll.flags = 0;
     coll.coll_type = UCC_COLL_TYPE_ALLGATHER;
     coll.src.info.buffer = tensor.data_ptr();
-    coll.src.info.count = tensor.element_size() * tensor.numel();
-    coll.src.info.datatype = UCC_DT_UINT8;
+    coll.src.info.count = tensor.numel();
+    coll.src.info.datatype = ucc_dtype_map.at(tensor.scalar_type());
     coll.src.info.mem_type = to_ucc_memType(tensor.device().type());
     coll.dst.info.buffer = flat_output[0].data_ptr();
-    coll.dst.info.count = flat_output[0].element_size() * flat_output[0].numel();
-    coll.dst.info.datatype = UCC_DT_UINT8;
+    coll.dst.info.count = flat_output[0].numel();
+    coll.dst.info.datatype = ucc_dtype_map.at(flat_output[0].scalar_type());
     coll.dst.info.mem_type =
         to_ucc_memType(outputTensors[0][0].device().type());
 
@@ -1096,8 +1096,8 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::reduce_scatter(
 
   coll.src.info.buffer = flat_input[0].data_ptr();
   coll.src.info.count = flat_input[0].numel();
-  coll.src.info.datatype = ucc_dtype_map.at(inputTensors[0][0].scalar_type());
-  coll.src.info.mem_type = to_ucc_memType(inputTensors[0][0].device().type());
+  coll.src.info.datatype = ucc_dtype_map.at(flat_input[0].scalar_type());
+  coll.src.info.mem_type = to_ucc_memType(flat_input[0].device().type());
   coll.dst.info.buffer = outputTensors[0].data_ptr();
   coll.dst.info.count = outputTensors[0].numel();
   coll.dst.info.datatype = ucc_dtype_map.at(outputTensors[0].scalar_type());
