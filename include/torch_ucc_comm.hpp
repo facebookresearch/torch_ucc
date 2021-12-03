@@ -87,7 +87,7 @@ namespace c10d {
   LOG(ERROR) << logger->getLogPrefix(_phase) << "[ERROR] " << _msg;
 #define TORCH_UCC_LOG_INFO(_phase, _msg) \
   LOG(INFO) << logger->getLogPrefix(_phase) << "[INFO] " << _msg;
-#define TORCH_UCC_LOG_DEBUG_phase, _msg)  \
+#define TORCH_UCC_LOG_DEBUG(_phase, _msg)  \
   VLOG(1) << logger->getLogPrefix(_phase) << "[DEBUG] " << _msg;
 
 enum torch_ucc_phase_t {
