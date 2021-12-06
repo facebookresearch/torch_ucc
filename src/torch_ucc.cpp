@@ -45,6 +45,7 @@ const std::map<at::ScalarType, ucc_datatype_t> ucc_dtype_map = {
     {at::kByte, UCC_DT_UINT8},
     {at::kChar, UCC_DT_INT8},
     {at::kHalf, UCC_DT_FLOAT16},
+    {at::kBFloat16, UCC_DT_BFLOAT16},
     {at::kDouble, UCC_DT_FLOAT64},
     {at::kFloat, UCC_DT_FLOAT32},
     {at::kInt, UCC_DT_INT32},
