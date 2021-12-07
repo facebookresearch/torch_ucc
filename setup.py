@@ -32,7 +32,8 @@ else:
   plugin_compile_args.extend(["-g", "-O0"])
 
 plugin_sources      = ["src/torch_ucc.cpp",
-                       "src/torch_ucc_comm.cpp"]
+                       "src/torch_ucc_comm.cpp",
+                       "src/torch_ucc_python.cpp"]
 plugin_include_dirs = ["{}/include/".format(ucc_plugin_dir),
                        "{}/include/".format(ucx_home),
                        "{}/include/".format(ucc_home)]
