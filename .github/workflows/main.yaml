@@ -18,7 +18,7 @@ jobs:
         apt-get update
         apt-get install -y --no-install-recommends build-essential git cmake libtool-bin wget autoconf automake
         conda uninstall -y pytorch torchvision
-        pip3 install --pre torch -f https://download.pytorch.org/whl/nightly/cpu/torch_nightly.html
+        pip3 install --pre torch -f https://download.pytorch.org/whl/nightly/cu113/torch_nightly.html
     - name: Get UCX
       run: |
         git clone ${OPENUCX_LINK} /tmp/ucx
