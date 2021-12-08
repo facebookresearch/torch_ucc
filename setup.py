@@ -33,7 +33,8 @@ else:
 
 plugin_sources      = ["src/torch_ucc.cpp",
                        "src/torch_ucc_comm.cpp",
-                       "src/torch_ucc_python.cpp"]
+                       "src/torch_ucc_init.cpp",
+                       "src/torch_ucc_init_oss.cpp"]
 plugin_include_dirs = ["{}/include/".format(ucc_plugin_dir),
                        "{}/include/".format(ucx_home),
                        "{}/include/".format(ucc_home)]
