@@ -95,6 +95,7 @@ jobs:
       run: |
         set -e
         git_version=$(python -c 'import torch; print(torch.version.git_version)')
+        torch_ucc_file=$(python -c "import inspect; import torch; import torch_ucc; print(inspect.getfile(torch_ucc))")
         python -c "import torch.distributed as dist; assert dist.is_nccl_available()"
         pip3 install expecttest
         git clone https://github.com/pytorch/pytorch.git
