@@ -94,7 +94,9 @@ jobs:
     - name: PyTorch distributed tests
       run: |
         git_version=$(python -c 'import torch; print(torch.version.git_version)')
+        pip3 install expecttest
         git clone https://github.com/pytorch/pytorch.git
         cd pytorch
         git checkout ${git_version}
+        python -c "import torch.distributed as dist; print(dist.is_nccl_available())"
         python test/run_test.py --verbose -i distributed/test_distributed_spawn
