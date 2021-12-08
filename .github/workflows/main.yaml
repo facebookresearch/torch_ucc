@@ -93,10 +93,11 @@ jobs:
         /bin/bash ./test/start_test.sh /tmp/param/train/comms/pt/comms.py --backend ucc --device cpu --b 4 --e 4M --c 1 --pt2pt one2one --src-ranks 0 --dst-ranks 1
     - name: PyTorch distributed tests
       run: |
+        set -e
         git_version=$(python -c 'import torch; print(torch.version.git_version)')
-        python -c "import torch.distributed as dist; print(dist.is_nccl_available())"
+        python -c "import torch.distributed as dist; assert dist.is_nccl_available()"
         pip3 install expecttest
         git clone https://github.com/pytorch/pytorch.git
         cd pytorch
         git checkout ${git_version}
-        python test/run_test.py --verbose -i distributed/test_distributed_spawn
+        python test/run_test.py --verbose --nccl -i distributed/test_distributed_spawn
