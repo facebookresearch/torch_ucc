@@ -1264,7 +1264,6 @@ C10_EXPORT void *createProcessGroupUCCForNCCL(void *args) {
     const c10::intrusive_ptr<Store>& store;
     int rank = -1;
     int size = -1;
-    std::chrono::duration<float> timeout;
   };
   args_t *args_ = static_cast<args_t *>(args);
   c10d::ProcessGroupUCC *pg = new ProcessGroupUCC(args_->store, args_->rank, args_->size);
