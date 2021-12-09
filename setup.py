@@ -11,9 +11,7 @@ import os
 import sys
 from setuptools import setup
 from torch.utils import cpp_extension
-import sysconfig
 
-ext_suffix = sysconfig.get_config_var('EXT_SUFFIX')
 ucc_plugin_dir = os.path.dirname(os.path.abspath(__file__))
 ucx_home = os.environ.get("UCX_HOME")
 if ucx_home is None:
