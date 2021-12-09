@@ -11,7 +11,9 @@ import os
 import sys
 from setuptools import setup
 from torch.utils import cpp_extension
+import sysconfig
 
+ext_suffix = sysconfig.get_config_var('EXT_SUFFIX')
 ucc_plugin_dir = os.path.dirname(os.path.abspath(__file__))
 ucx_home = os.environ.get("UCX_HOME")
 if ucx_home is None:
@@ -32,9 +34,7 @@ else:
   plugin_compile_args.extend(["-g", "-O0"])
 
 plugin_sources      = ["src/torch_ucc.cpp",
-                       "src/torch_ucc_comm.cpp",
-                       "src/torch_ucc_init.cpp",
-                       "src/torch_ucc_init_oss.cpp"]
+                       "src/torch_ucc_comm.cpp"]
 plugin_include_dirs = ["{}/include/".format(ucc_plugin_dir),
                        "{}/include/".format(ucx_home),
                        "{}/include/".format(ucc_home)]
@@ -47,7 +47,15 @@ if with_cuda is None or with_cuda == "no":
     print("CUDA support is disabled")
     module = cpp_extension.CppExtension(
         name = "torch_ucc",
-        sources = plugin_sources,
+        sources = plugin_sources + ["src/torch_ucc_init.cpp"],
+        include_dirs = plugin_include_dirs,
+        library_dirs = plugin_library_dirs,
+        libraries = plugin_libraries,
+        extra_compile_args=plugin_compile_args
+    )
+    module_oss = cpp_extension.CppExtension(
+        name = "torch_ucc_oss",
+        sources = plugin_sources + ["src/torch_ucc_init_oss.cpp"],
         include_dirs = plugin_include_dirs,
         library_dirs = plugin_library_dirs,
         libraries = plugin_libraries,
@@ -58,7 +66,15 @@ else:
     plugin_compile_args.append("-DUSE_CUDA")
     module = cpp_extension.CUDAExtension(
         name = "torch_ucc",
-        sources = plugin_sources,
+        sources = plugin_sources + ["src/torch_ucc_init.cpp"],
+        include_dirs = plugin_include_dirs,
+        library_dirs = plugin_library_dirs,
+        libraries = plugin_libraries,
+        extra_compile_args=plugin_compile_args
+    )
+    module_oss = cpp_extension.CUDAExtension(
+        name = "torch_ucc_oss",
+        sources = plugin_sources + ["src/torch_ucc_init_oss.cpp"],
         include_dirs = plugin_include_dirs,
         library_dirs = plugin_library_dirs,
         libraries = plugin_libraries,
@@ -67,6 +83,6 @@ else:
 setup(
     name = "torch-ucc",
     version = "1.0.0",
-    ext_modules = [module],
+    ext_modules = [module, module_oss],
     cmdclass={'build_ext': cpp_extension.BuildExtension}
 )
