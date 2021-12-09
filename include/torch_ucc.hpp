@@ -74,6 +74,7 @@ class ProcessGroupUCC : public ProcessGroup {
    public:
     std::vector<at::Tensor> src;
     std::vector<at::Tensor> dst;
+    std::vector<at::Tensor> flat;
     WorkData() {}
     virtual ~WorkData() = default;
   };
@@ -90,9 +91,9 @@ class ProcessGroupUCC : public ProcessGroup {
     std::vector<uint32_t> recv_offsets;
   };
 
-  class AllgatherWorkData : public WorkData {
+  class AllgathervWorkData : public WorkData {
    public:
-    AllgatherWorkData(int size)
+    AllgathervWorkData(int size)
       : recv_lengths(size),
         recv_offsets(size) {}
     std::vector<uint64_t> recv_lengths;
@@ -172,22 +173,16 @@ class ProcessGroupUCC : public ProcessGroup {
 	std::unique_ptr<at::cuda::CUDAEvent> getPooledEvent();
 #endif
 
+template <typename PreProcess, typename PostProcess>
   c10::intrusive_ptr<ProcessGroup::Work> collective_post(
       OpType opType,
+      PreProcess preproc,
+      PostProcess postproc,
       ucc_coll_args_t& coll,
       std::unique_ptr<ProcessGroupUCC::WorkData> data,
       c10::Device dev,
       std::vector<at::Tensor> &outputTensors,
       const char* prof_title
-// pass a event on which a record was started for this device
-// eg when a copy is done
-// syncrhonize between the device stream and internal stream
-// using this event
-// if the event is null, then a record will be started on this
-// device
-#ifdef USE_CUDA
-    , std::unique_ptr<at::cuda::CUDAEvent> cuda_ev = nullptr
-#endif
 	);
 
   c10::intrusive_ptr<ProcessGroup::Work> broadcast(
