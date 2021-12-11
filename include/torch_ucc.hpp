@@ -11,7 +11,6 @@
 #pragma once
 
 #include "torch_ucc_comm.hpp"
-#include <torch/python.h>
 
 #include <exception>
 #include <memory>
@@ -19,8 +18,6 @@
 #include <queue>
 #include <thread>
 #include <vector>
-
-#include <pybind11/chrono.h>
 
 #include <c10d/ProcessGroup.hpp>
 #include <c10d/Store.hpp>
@@ -296,13 +293,6 @@ template <typename PreProcess, typename PostProcess>
       int rank,
       int size,
       const std::chrono::duration<float>& timeout);
-
-  static void ProcessGroupUCCConstructor() __attribute__((constructor)) {
-    py::object module = py::module::import("torch.distributed");
-    py::object register_backend =
-        module.attr("Backend").attr("register_backend");
-    register_backend("ucc", py::cpp_function(createProcessGroupUCC));
-  }
 
  protected:
   const std::chrono::duration<float> timeout_;

@@ -1253,8 +1253,4 @@ void ProcessGroupUCC::initComm(c10::Device dev) {
 #endif
 }
 
-PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
-  m.def("createProcessGroupUCC", &ProcessGroupUCC::createProcessGroupUCC);
-}
-
 } // namespace c10d
