@@ -150,7 +150,7 @@ ucc_status_t oob_allgather_free(void* req) {
 }
 
 CommUCC::CommUCC(
-    torch_ucc_oob_coll_info_t* oob_info,
+    std::shared_ptr<torch_ucc_oob_coll_info_t> oob,
     const c10::intrusive_ptr<ProcessGroupUCCLogger>& logger)
     : CommBase(logger) {
   ucc_lib_config_h lib_config;
@@ -190,7 +190,7 @@ CommUCC::CommUCC(
       context_config,
       NULL,
       "ESTIMATED_NUM_EPS",
-      std::to_string(oob_info->size).c_str());
+      std::to_string(oob->size).c_str());
   if (st != UCC_OK) {
     ucc_context_config_release(context_config);
     ucc_finalize(lib);
@@ -205,12 +205,12 @@ CommUCC::CommUCC(
   context_params.mask =
       UCC_CONTEXT_PARAM_FIELD_TYPE | UCC_CONTEXT_PARAM_FIELD_OOB;
   context_params.type = UCC_CONTEXT_SHARED;
-  context_params.oob.n_oob_eps = oob_info->size;
-  context_params.oob.oob_ep = oob_info->rank;
+  context_params.oob.n_oob_eps = oob->size;
+  context_params.oob.oob_ep = oob->rank;
   context_params.oob.allgather = oob_allgather;
   context_params.oob.req_test = oob_allgather_test;
   context_params.oob.req_free = oob_allgather_free;
-  context_params.oob.coll_info = oob_info;
+  context_params.oob.coll_info = oob.get();
   st = ucc_context_create(lib, &context_params, context_config, &context);
   ucc_context_config_release(context_config);
   if (st != UCC_OK) {
