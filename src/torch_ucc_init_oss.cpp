@@ -1,4 +1,5 @@
 #include <torch/python.h>
+#include "torch_ucc.hpp"
 
 // This function is intentionally designed to take a void * argument
 // and return a void * argument. This design is to make the mangled
