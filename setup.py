@@ -41,6 +41,12 @@ plugin_library_dirs = ["{}/lib/".format(ucx_home),
                        "{}/lib/".format(ucc_home)]
 plugin_libraries    = ["ucp", "uct", "ucm", "ucs", "ucc"]
 
+if '--oss' in sys.argv:
+  sys.argv.remove('--oss')
+  plugin_sources += ["src/torch_ucc_init_oss.cpp"]
+else:
+  plugin_sources += ["src/torch_ucc_init.cpp"]
+
 with_cuda = os.environ.get("WITH_CUDA")
 if with_cuda is None or with_cuda == "no":
     print("CUDA support is disabled")

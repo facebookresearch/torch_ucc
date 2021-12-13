@@ -168,8 +168,8 @@ class CommUCC : public CommBase {
  public:
   void progress() override;
   CommUCC(
-      torch_ucc_oob_coll_info_t* oob_info,
-      const c10::intrusive_ptr<ProcessGroupUCCLogger>& logger);
+    std::shared_ptr<torch_ucc_oob_coll_info_t> oob,
+    const c10::intrusive_ptr<ProcessGroupUCCLogger>& logger);
   void free_request(ucc_coll_req_h request) override;
   ~CommUCC();
 };
