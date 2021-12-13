@@ -20,7 +20,15 @@ CommUCX::CommUCX(
   ucp_config_t* config;
   ucs_status_t st;
   ucp_worker_params_t worker_params;
+  ucp_lib_attr_t ucp_attr;
 
+  ucp_attr.field_mask = UCP_LIB_ATTR_FIELD_MAX_THREAD_LEVEL;
+  TORCH_UCX_CHECK(
+      ucp_lib_query(&ucp_attr), "failed to query UCP lib attributes");
+  TORCH_CHECK(
+      ucp_attr.max_thread_level == UCS_THREAD_MODE_MULTI,
+      "ucx library wasn't initialized with multithreading support, "
+      "please check ucx build options");
   TORCH_UCX_CHECK(
       ucp_config_read("TORCH", nullptr, &config), "failed to read UCP config");
 
@@ -174,7 +182,8 @@ CommUCC::CommUCC(
       ucc_lib_get_attr(lib, &lib_attr), "failed to query for lib attr");
   TORCH_CHECK(
       lib_attr.thread_mode == UCC_THREAD_MULTIPLE,
-      "ucc library wasn't initialized with mt support, please check ucc compile options ");
+      "ucc library wasn't initialized with multithreading support, "
+      "please check ucc build options");
   st = ucc_context_config_read(lib, NULL, &context_config);
   if (st != UCC_OK) {
     // FIXME: would this cause deadlock if only one rank fails?
