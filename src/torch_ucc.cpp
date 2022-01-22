@@ -62,7 +62,9 @@ const std::map<ReduceOp, ucc_reduction_op_t> ucc_op_map = {
     {ReduceOp::BAND, UCC_OP_BAND},
     {ReduceOp::BOR, UCC_OP_BOR},
     {ReduceOp::BXOR, UCC_OP_BXOR},
+#if TORCH_VERSION_MAJOR > 1 || (TORCH_VERSION_MAJOR == 1 && TORCH_VERSION_MINOR >= 11)
     {ReduceOp::AVG, UCC_OP_AVG},
+#endif
 };
 
 struct torch_ucc_config_t {
