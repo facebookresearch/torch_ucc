@@ -44,18 +44,19 @@ namespace c10d {
     ucc_status_t result = _cmd;           \
     if (result != UCC_OK) {               \
       std::string err = c10::str(         \
-          logger->getLogPrefix(),         \
-          "UCC error: ",                  \
-          _error_msg,                     \
-          "\n in: ",                      \
+          "[",                            \
           std::string(__FILE__),          \
           ":",                            \
           std::to_string(__LINE__),       \
-          ":\n error code ",              \
+          "] ",                           \
+          logger->getLogPrefix(),         \
+          _error_msg,                     \
+          ", error code ",                \
           result,                         \
-          "(",                            \
+          ": ",                           \
           ucc_status_string(result),      \
-          ")");                           \
+          ", system error code ",         \
+          errno);                         \
       TORCH_CHECK(false, err);            \
     }                                     \
   } while (0)
@@ -66,18 +67,19 @@ namespace c10d {
     ucs_status_t result = _cmd;           \
     if (result != UCS_OK) {               \
       std::string err = c10::str(         \
-          logger->getLogPrefix(),         \
-          "UCX error: ",                  \
-          _error_msg,                     \
-          "\n in: ",                      \
+          "[",                            \
           std::string(__FILE__),          \
           ":",                            \
           std::to_string(__LINE__),       \
-          ":\n error code ",              \
+          "] ",                           \
+          logger->getLogPrefix(),         \
+          _error_msg,                     \
+          ", error code ",                \
           result,                         \
-          "(",                            \
+          ": ",                           \
           ucs_status_string(result),      \
-          ")");                           \
+          ", system error code ",         \
+          errno);                         \
       TORCH_CHECK(false, err);            \
     }                                     \
   } while (0)
@@ -91,12 +93,12 @@ namespace c10d {
   VLOG(1) << logger->getLogPrefix(_phase) << "[DEBUG] " << _msg;
 
 enum torch_ucc_phase_t {
-  TORCH_UCC_UNKNOWN,
+  TORCH_UCC_UNKNOWN = -1,
   TORCH_UCC_INIT,
   TORCH_UCC_READY,
   TORCH_UCC_COLL_POST,
   TORCH_UCC_COLL_PROGRESS,
-  TORCH_UCC_FINALIZE
+  TORCH_UCC_FINALIZE,
 };
 
 const std::map<torch_ucc_phase_t, std::string> ucc_phase_map = {
