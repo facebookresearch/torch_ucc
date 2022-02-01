@@ -1,21 +1,16 @@
 #include <torch/python.h>
 #include "torch_ucc.hpp"
 
+using namespace c10d;
+
 // This function is intentionally designed to take a void * argument
 // and return a void * argument. This design is to make the mangled
 // symbol simple.
-C10_EXPORT void *createProcessGroupUCCForNCCL(void *args) {
-  std::cout << "Enter createProcessGroupUCCForNCCL" << std::endl;
-  using namespace c10d;
-  struct args_t {
-    const c10::intrusive_ptr<Store>& store;
-    int rank = -1;
-    int size = -1;
-  };
-  args_t *args_ = static_cast<args_t *>(args);
-  c10d::ProcessGroupUCC *pg = new ProcessGroupUCC(args_->store, args_->rank, args_->size);
-  std::cout << "Leaving createProcessGroupUCCForNCCL" << std::endl;
-  return static_cast<void *>(pg);
+extern "C" C10_EXPORT c10::intrusive_ptr<ProcessGroup> createProcessGroupUCCForNCCL(
+  const c10::intrusive_ptr<Store>& store,
+  int rank, int size
+) {
+  return c10::make_intrusive<ProcessGroupUCC>(store, rank, size);
 }
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {}
