@@ -3,9 +3,6 @@
 
 using namespace c10d;
 
-// This function is intentionally designed to take a void * argument
-// and return a void * argument. This design is to make the mangled
-// symbol simple.
 extern "C" C10_EXPORT c10::intrusive_ptr<ProcessGroup> createProcessGroupUCCForNCCL(
   const c10::intrusive_ptr<Store>& store,
   int rank, int size
