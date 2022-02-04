@@ -18,7 +18,9 @@ const char *torch_ucc_rank_state_string(torch_ucc_rank_state_t state)
     case TORCH_UCC_RANK_STATE_NOT_RESPONDIG:
         return "Not responding";
     case TORCH_UCC_RANK_STATE_COLLECTIVE_NOT_POSTED:
-        return "Collective wasn't posted";
+        return "Collective wasn't initalized nor posted";
+    case TORCH_UCC_RANK_STATE_COLLECTIVE_INIT:
+        return "Collective initialized, but not yet posted";
     case TORCH_UCC_RANK_STATE_COLLECTIVE_INPROGRESS:
         return "Collective posted and in progress";
     case TORCH_UCC_RANK_STATE_COLLECTIVE_TIMEOUT:

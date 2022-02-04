@@ -105,9 +105,10 @@ class ProcessGroupUCC : public ProcessGroup {
     ProgressEntry(
         CommBase* comm,
         ucc_coll_req_h request,
-        uint64_t seq_num)
+        uint64_t seq_num,
+        OpType opType)
         : status_(UCC_INPROGRESS), comm_(comm), request_(request),
-          seq_num_(seq_num) {}
+          seq_num_(seq_num), opType_(opType) {}
     void finalize(std::exception_ptr eptr = nullptr);
     ucc_status_t status_;
     CommBase* comm_;
@@ -119,6 +120,7 @@ class ProcessGroupUCC : public ProcessGroup {
     std::vector<ucp_ep_h> *eps;
     int rank;
     int comm_id;
+    OpType opType_;
   };
 
   class WorkUCC : public ProcessGroup::Work {
@@ -276,7 +278,7 @@ template <typename PreProcess, typename PostProcess>
 
 class CommPG {
   c10::intrusive_ptr<ProcessGroupUCCLogger> logger;
-  std::vector<torch_ucc_rank_state_t> comm_state;
+  std::vector<torch_ucc_rank_timeout_status_t> comm_snapshot;
   std::shared_ptr<torch_ucc_oob_coll_info_t> oob;
   CommUCX ucx_comm;
   CommUCC ucc_comm;
@@ -289,13 +291,19 @@ class CommPG {
   std::deque<std::shared_ptr<ProcessGroupUCC::ProgressEntry>> progress_queue;
   bool stop_progress_loop;
   bool collective_inprogress;
+  const std::chrono::duration<float> timeout_;
 
-  void check_communicator_status(int my_rank, int comm_id, uint64_t seq_num,
-      std::vector<ucp_ep_h> *eps);
+  void check_communicator_status(
+      std::shared_ptr<ProcessGroupUCC::ProgressEntry> entry);
+  void comms_status_health_check(int comm_size, int my_rank);
+
  public:
   c10::DeviceIndex cuda_device_index;
-  CommPG(const c10::intrusive_ptr<ProcessGroupUCCLogger>& logger,
-      std::shared_ptr<torch_ucc_oob_coll_info_t> oob, c10::Device dev);
+  CommPG(
+      const c10::intrusive_ptr<ProcessGroupUCCLogger>& logger,
+      std::shared_ptr<torch_ucc_oob_coll_info_t> oob,
+      c10::Device dev,
+      const std::chrono::duration<float>& timeout);
 
   ~CommPG();
 
@@ -316,7 +324,10 @@ class CommPG {
   c10::intrusive_ptr<ProcessGroup::Work> enqueue_p2p(
       OpType opType,
       ucc_coll_req_h request,
-      const char* prof_title);
+      const char* prof_title,
+      std::vector<ucp_ep_h>* eps,
+      int rank,
+      int comm_id);
 
 #ifdef USE_CUDA
   void enqueue_cuda_collective(
@@ -344,7 +355,8 @@ class CommPG {
       uint32_t& id,
       c10::Device dev,
       std::shared_ptr<torch_ucc_oob_coll_info_t> oob,
-      const c10::intrusive_ptr<ProcessGroupUCCLogger>& logger);
+      const c10::intrusive_ptr<ProcessGroupUCCLogger>& logger,
+      const std::chrono::duration<float>& timeout);
 
   void progress_loop();
 

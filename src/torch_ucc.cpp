@@ -242,17 +242,27 @@ void ProcessGroupUCC::ProgressEntry::finalize(std::exception_ptr eptr) {
 }
 
 ucs_status_t torch_ucc_timeout_am_cb(
-    void *arg,
-    const void *header,
+    void* arg,
+    const void* header,
     size_t header_length,
-    void *data,
+    void* data,
     size_t length,
-    const ucp_am_recv_param_t *param) {
-  torch_ucc_timeout_desc_t *dsc = (torch_ucc_timeout_desc_t*)header;
-  CommPG *comm = (CommPG*)arg;
-  torch_ucc_rank_state_t * state = new torch_ucc_rank_state_t;
+    const ucp_am_recv_param_t* param) {
+  torch_ucc_timeout_desc_t* dsc = (torch_ucc_timeout_desc_t*)header;
+  CommPG* comm = (CommPG*)arg;
+  torch_ucc_rank_timeout_status_t* status = new torch_ucc_rank_timeout_status_t;
   ucp_request_param_t params;
   ucp_tag_t ucp_tag;
+  // remote rank experiences timeout, update the snapshot
+  TORCH_UCC_COMMS_SNAPSHOT(
+      comm->comm_snapshot[dsc->src],
+      TORCH_UCC_RANK_STATE_COLLECTIVE_TIMEOUT,
+      dsc->seq_num,
+      dsc->opType);
+
+  status->state  = TORCH_UCC_RANK_STATE_COLLECTIVE_NOT_POSTED;
+  status->last_seqnum = comm->comm_snapshot[dsc->rank].last_seqnum;
+  status->opType = comm->comm_snapshot[dsc->rank].opType;
 
 #ifdef USE_CUDA
   if (comm->cuda_device_index >= 0) {
@@ -262,60 +272,63 @@ ucs_status_t torch_ucc_timeout_am_cb(
     int active;
     st = cuDeviceGet(&device, comm->cuda_device_index);
     if (st != CUDA_SUCCESS) {
-      *state = TORCH_UCC_RANK_STATE_DEVICE_ERROR;
+      status->state = TORCH_UCC_RANK_STATE_DEVICE_ERROR;
       goto send_response;
     }
     st = cuDevicePrimaryCtxGetState(device, &flags, &active);
     if (st != CUDA_SUCCESS || !active) {
-      *state = TORCH_UCC_RANK_STATE_DEVICE_ERROR;
+      status->state = TORCH_UCC_RANK_STATE_DEVICE_ERROR;
       goto send_response;
     }
   }
 #endif
 
-  *state = TORCH_UCC_RANK_STATE_COLLECTIVE_NOT_POSTED;
   if (comm->seq_num > dsc->seq_num) {
-    *state = TORCH_UCC_RANK_STATE_COLLECTIVE_DONE;
+    status->state  = TORCH_UCC_RANK_STATE_COLLECTIVE_DONE;
     for (auto& entry : comm->progress_queue) {
       if (entry->seq_num_ == dsc->seq_num) {
-        switch (entry->request_->status)
-        {
-        case UCC_ERR_TIMED_OUT:
-          *state = TORCH_UCC_RANK_STATE_COLLECTIVE_TIMEOUT;
-          break;
-        default:
-          *state = TORCH_UCC_RANK_STATE_COLLECTIVE_INPROGRESS;
+        switch (entry->request_->status) {
+          case UCC_ERR_TIMED_OUT:
+            status->state = TORCH_UCC_RANK_STATE_COLLECTIVE_TIMEOUT;
+            break;
+          default:
+            status->state = TORCH_UCC_RANK_STATE_COLLECTIVE_INPROGRESS;
         }
         break;
       }
     }
+  } else if (comm->comm_snapshot[dsc->rank].last_seqnum >= dsc->seq_num) {
+    /* collective is initialized, but not yet posted to the queue */
+    status->state = TORCH_UCC_RANK_STATE_COLLECTIVE_INIT;
   }
 
 send_response:
-  TORCH_UCX_MAKE_OOB_SEND_TAG(ucp_tag, 0, dsc->rank, dec->comm_id);
+  TORCH_UCX_MAKE_OOB_SEND_TAG(ucp_tag, 0, dsc->rank, dsc->comm_id);
   params.op_attr_mask = UCP_OP_ATTR_FIELD_CALLBACK |
       UCP_OP_ATTR_FIELD_DATATYPE | UCP_OP_ATTR_FIELD_USER_DATA;
-  params.datatype = ucp_dt_make_contig(sizeof(torch_ucc_rank_state_t));
-  params.user_data = (void*)state;
+  params.datatype = ucp_dt_make_contig(sizeof(torch_ucc_rank_timeout_status_t));
+  params.user_data = (void*)status;
   params.cb.send = [](void* request, ucs_status_t status, void* user_data) {
-    torch_ucc_rank_state_t * state = (torch_ucc_rank_state_t*)user_data;
+    torch_ucc_rank_timeout_status_t* state = (torch_ucc_rank_timeout_status_t*)user_data;
     delete user_data;
     ucp_request_free(request);
   };
-  ucp_tag_send_nbx(param->reply_ep, state, 1, ucp_tag, &params);
+  ucp_tag_send_nbx(param->reply_ep, status, 1, ucp_tag, &params);
   return UCS_OK;
 }
 
 CommPG::CommPG(
     const c10::intrusive_ptr<ProcessGroupUCCLogger>& logger_,
     std::shared_ptr<torch_ucc_oob_coll_info_t> oob_,
-    c10::Device dev)
+    c10::Device dev,
+    const std::chrono::duration<float>& timeout)
     : logger(logger_),
       oob(oob_),
       ucx_comm(oob->size, logger),
       ucc_comm(oob, logger),
       seq_num(0),
-      cuda_device_index(TORCH_UCC_DEVICE_NOT_SET) {
+      cuda_device_index(TORCH_UCC_DEVICE_NOT_SET),
+      timeout_(timeout) {
   if (dev.is_cuda()) {
     cuda_device_index = dev.index();
   }
@@ -330,6 +343,7 @@ CommPG::CommPG(
   ucx_comm.set_am_recv_handler(&params);
   stop_progress_loop = false;
   collective_inprogress = false;
+  comm_snapshot.resize(oob->size);
   progress_thread = std::thread(&CommPG::progress_loop, this);
   pthread_setname_np(progress_thread.native_handle(), "ucc-progress");
 }
@@ -348,7 +362,8 @@ std::shared_ptr<CommPG> CommPG::get_comm(
     uint32_t& id,
     c10::Device dev,
     std::shared_ptr<torch_ucc_oob_coll_info_t> oob,
-    const c10::intrusive_ptr<ProcessGroupUCCLogger>& logger) {
+    const c10::intrusive_ptr<ProcessGroupUCCLogger>& logger,
+    const std::chrono::duration<float>& timeout) {
   static std::mutex m;
   static std::weak_ptr<CommPG> comm;
   static uint32_t comm_id;
@@ -380,7 +395,7 @@ std::shared_ptr<CommPG> CommPG::get_comm(
     std::shared_ptr<CommPG> shared_comm = comm.lock();
     if (!shared_comm) {
       shared_comm = std::make_shared<CommPG>(
-          logger, oob, dev);
+          logger, oob, dev, timeout);
       comm = shared_comm;
     } else {
       if (dev.is_cuda()) {
@@ -397,7 +412,7 @@ std::shared_ptr<CommPG> CommPG::get_comm(
     }
     return shared_comm;
   } else {
-    return std::make_shared<CommPG>(logger, oob, dev);
+    return std::make_shared<CommPG>(logger, oob, dev, timeout);
   }
 }
 
@@ -568,7 +583,10 @@ void CommPG::ucc_destroy_team(ucc_team_h& team) {
 c10::intrusive_ptr<ProcessGroup::Work> CommPG::enqueue_p2p(
     OpType opType,
     ucc_coll_req_h request,
-    const char* prof_title) {
+    const char* prof_title,
+    std::vector<ucp_ep_h>* eps,
+    int rank,
+    int comm_id) {
   auto work = c10::make_intrusive<ProcessGroupUCC::WorkUCC>(opType, prof_title);
   if (torch_ucc_config.use_future) {
     work->future_ = c10::make_intrusive<at::ivalue::Future>(
@@ -582,8 +600,11 @@ c10::intrusive_ptr<ProcessGroup::Work> CommPG::enqueue_p2p(
     }
     return work;
   }
-  auto entry = std::make_shared<ProcessGroupUCC::ProgressEntry>(
-      &ucx_comm, request, 0);
+  auto entry =
+      std::make_shared<ProcessGroupUCC::ProgressEntry>(&ucx_comm, request, seq_num++, opType);
+  entry->eps = eps;
+  entry->rank = rank;
+  entry->comm_id = comm_id;
   work->entry_ = entry;
   std::unique_lock<std::mutex> lock(mutex);
   progress_queue.push_back(entry);
@@ -597,7 +618,7 @@ void CommPG::enqueue_collective(
     c10::intrusive_ptr<ProcessGroupUCC::WorkUCC> work,
     ucc_coll_args_t& coll,
     ucc_team_h team,
-    std::vector<ucp_ep_h> *eps,
+    std::vector<ucp_ep_h>* eps,
     int rank,
     int comm_id) {
   ucc_coll_req_h request;
@@ -605,8 +626,8 @@ void CommPG::enqueue_collective(
       ucc_collective_init(&coll, &request, team), "failed to init collective");
   TORCH_UCC_CHECK(ucc_collective_post(request), "failed to post collective");
 
-  auto entry =
-      std::make_shared<ProcessGroupUCC::ProgressEntry>(&ucc_comm, request, seq_num++);
+  auto entry = std::make_shared<ProcessGroupUCC::ProgressEntry>(
+      &ucc_comm, request, seq_num++, work->opType_);
   entry->data = std::move(data);
   entry->future_ = work->getFuture();
   entry->eps = eps;
@@ -626,13 +647,18 @@ void CommPG::enqueue_cuda_collective(
     ucc_coll_args_t& coll,
     ucc_team_h team,
     ucc_ee_h ee,
-    std::vector<ucp_ep_h> *eps,
+    std::vector<ucp_ep_h>* eps,
     int rank,
     int comm_id) {
   ucc_coll_req_h request;
   TORCH_UCC_CHECK(
       ucc_collective_init(&coll, &request, team),
       "failed to init cuda collective");
+  TORCH_UCC_COMMS_SNAPSHOT(
+      comm_snapshot[rank],
+      TORCH_UCC_RANK_STATE_COLLECTIVE_INIT,
+      seq_num,
+      work->opType_);
   ucc_ev_t comp_ev, *post_ev;
   comp_ev.ev_type = UCC_EVENT_COMPUTE_COMPLETE;
   comp_ev.ev_context = nullptr;
@@ -644,8 +670,8 @@ void CommPG::enqueue_cuda_collective(
   ucc_status_t st = ucc_ee_get_event(ee, &post_ev);
   TORCH_CHECK(st == UCC_OK && post_ev->ev_type == UCC_EVENT_COLLECTIVE_POST);
   ucc_ee_ack_event(ee, post_ev);
-  auto entry =
-      std::make_shared<ProcessGroupUCC::ProgressEntry>(&ucc_comm, request, seq_num++);
+  auto entry = std::make_shared<ProcessGroupUCC::ProgressEntry>(
+      &ucc_comm, request, seq_num++, work->opType_);
   entry->data = std::move(data);
   entry->eps = eps;
   entry->rank = rank;
@@ -658,88 +684,174 @@ void CommPG::enqueue_cuda_collective(
 }
 #endif
 
+void CommPG::comms_status_health_check (int comm_size, int my_rank) {
+  uint64_t seq_num = comm_snapshot[my_rank].last_seqnum;
+  std::map<torch_ucc_rank_state_t, std::vector<int>> state_bucket;
+  std::map<uint64_t, std::vector<int>> seqnum_bucket;
+  std::set<int> bad_ranks;
+  std::string ranks_state_summary = "";
+
+  for (auto i = 0; i < comm_size; i++) {
+    if (comm_snapshot[i].state != TORCH_UCC_RANK_STATE_COLLECTIVE_DONE) {
+      std::string err_log = c10::str(
+          "on rank ",
+          std::to_string(i),
+          ": ",
+          torch_ucc_rank_state_string(comm_snapshot[i].state));
+      TORCH_UCC_LOG_ERROR(TORCH_UCC_COMM_CHECK, err_log);
+    }
+    // bucketize ranks based on state
+    if (state_bucket.find(comm_snapshot[i].state) == state_bucket.end()) {
+      state_bucket[comm_snapshot[i].state] = {i};
+    } else {
+      state_bucket[comm_snapshot[i].state].push_back(i);
+    }
+    // bucketize ranks based on seqnum
+    auto last_seqnum = comm_snapshot[i].last_seqnum;
+    if (seqnum_bucket.find(last_seqnum) == seqnum_bucket.end()) {
+      seqnum_bucket[last_seqnum] = {i};
+    } else {
+      seqnum_bucket[last_seqnum].push_back(i);
+    }
+    /* check ranks who are lagging behind */
+    if (comm_snapshot[i].last_seqnum > seq_num) {
+      bad_ranks.insert(my_rank);
+    } else if (comm_snapshot[i].last_seqnum < seq_num) {
+      bad_ranks.insert(i);
+    }
+  }
+  /* check ranks with problematic state */
+  for (auto sr : state_bucket) {
+    if (sr.first != TORCH_UCC_RANK_STATE_COLLECTIVE_DONE &&
+        sr.second.size() > 0) {
+      std::string rank_state = c10::str(
+          "Ranks [",
+          sr.second,
+          "] are '",
+          torch_ucc_rank_state_string(sr.first),
+          "'");
+      TORCH_UCC_LOG_INFO(TORCH_UCC_COMM_CHECK, rank_state);
+      ranks_state_summary += c10::str("\n\t\t", rank_state);
+      /* good ranks likely also experience timeout */
+      if (sr.first != TORCH_UCC_RANK_STATE_COLLECTIVE_TIMEOUT &&
+          sr.first != TORCH_UCC_RANK_STATE_COLLECTIVE_INIT) {
+        bad_ranks.insert(sr.second.begin(), sr.second.end());
+      }
+    }
+    /* if no bad ranks found, but all ranks are stuck in the same state/seq_num,
+       it's likely some application issues that trigger timeout
+    */
+    if (bad_ranks.size() == 0 && sr.second.size() == comm_size) {
+      bad_ranks.insert(sr.second.begin(), sr.second.end());
+      break;
+    }
+  }
+
+  /* get the last known seqnum each rank is working on */
+  std::string ranks_seqnum_summary = "";
+  for (auto seq : seqnum_bucket) {
+    ranks_seqnum_summary += c10::str(
+        "\n\t\tRanks [",
+        seq.second,
+        "] are last known progressing comms #",
+        seq.first,
+        " (op=",
+        opTypeToString(comm_snapshot[seq.second[0]].opType),
+        ")");
+  }
+  /* error out if we found any bad rank
+     TODO: can we abort gracefully? */
+  TORCH_CHECK(
+      bad_ranks.size() == 0,
+      c10::str(
+          logger->getLogPrefix(TORCH_UCC_COMM_CHECK),
+          "\n\tAborting comms #",
+          seq_num,
+          " (op=",
+          opTypeToString(comm_snapshot[my_rank].opType),
+          ") due to the problematic ranks: [ ",
+          bad_ranks,
+          " ]",
+          ranks_state_summary,
+          "\n\tComms status of other ranks: ",
+          ranks_seqnum_summary));
+}
+
 void CommPG::check_communicator_status(
-      int my_rank,
-      int comm_id,
-      uint64_t seq_num,
-      std::vector<ucp_ep_h> *eps) {
+    std::shared_ptr<ProcessGroupUCC::ProgressEntry> entry) {
+  if (entry == nullptr) {
+    return;
+  }
+  int my_rank = entry->rank;
+  int comm_id = entry->comm_id;
+  uint64_t seq_num = entry->seq_num_;
+  OpType opType = entry->opType_;
+  std::vector<ucp_ep_h>* eps = entry->eps;
   ucp_request_param_t params_am, params_recv;
   torch_ucc_timeout_desc_t dsc;
 
-  comm_state.resize(eps->size());
+  comm_snapshot.resize(eps->size());
+  if (progress_queue.empty() && comm_snapshot[my_rank].last_seqnum > seq_num) {
+    seq_num = comm_snapshot[my_rank].last_seqnum;
+    opType = comm_snapshot[my_rank].opType;
+  }
+
   params_am.op_attr_mask = UCP_OP_ATTR_FIELD_CALLBACK | UCP_OP_ATTR_FIELD_FLAGS;
   params_am.flags = UCP_AM_SEND_REPLY;
   params_am.cb.send = [](void* request, ucs_status_t status, void* user_data) {
     static_cast<ucc_coll_req_h>(request)->status = UCC_OK;
   };
+  dsc.src = my_rank;
   dsc.seq_num = seq_num;
   dsc.comm_id = comm_id;
+  dsc.opType = opType;
   for (auto i = 0; i < (int)eps->size(); i++) {
     if (i == my_rank) {
-      comm_state[i] = TORCH_UCC_RANK_STATE_COLLECTIVE_TIMEOUT;
       continue;
     }
-    comm_state[i] = TORCH_UCC_RANK_STATE_NOT_RESPONDIG;
+    comm_snapshot[i].state = (comm_snapshot[i].last_seqnum > seq_num)
+        ? TORCH_UCC_RANK_STATE_COLLECTIVE_DONE
+        : TORCH_UCC_RANK_STATE_NOT_RESPONDIG;
     dsc.rank = i;
-    ucp_am_send_nbx((*eps)[i], TORCH_UCC_TIMEOUT_AM_ID, &dsc, sizeof(dsc),
-                    nullptr, 0ul, &params_am);
+    ucp_am_send_nbx(
+        (*eps)[i],
+        TORCH_UCC_TIMEOUT_AM_ID,
+        &dsc,
+        sizeof(dsc),
+        nullptr,
+        0ul,
+        &params_am);
     ucp_tag_t ucp_tag, ucp_tag_mask;
     TORCH_UCX_MAKE_OOB_RECV_TAG(ucp_tag, ucp_tag_mask, 0, i, dsc.comm_id);
-    params_recv.op_attr_mask = UCP_OP_ATTR_FIELD_CALLBACK |
-      UCP_OP_ATTR_FIELD_DATATYPE;
-    params_recv.datatype = ucp_dt_make_contig(sizeof(torch_ucc_rank_state_t));
+    params_recv.op_attr_mask =
+        UCP_OP_ATTR_FIELD_CALLBACK | UCP_OP_ATTR_FIELD_DATATYPE;
+    params_recv.datatype = ucp_dt_make_contig(sizeof(torch_ucc_rank_timeout_status_t));
     params_recv.cb.recv = [](void* request,
                              ucs_status_t status,
                              const ucp_tag_recv_info_t* info,
-                             void* user_data) {
-      ucp_request_free(request);
-    };
-    ucp_tag_recv_nbx(ucx_comm.worker, &(comm_state[i]), 1, ucp_tag, ucp_tag_mask,
-                     &params_recv);
+                             void* user_data) { ucp_request_free(request); };
+    ucp_tag_recv_nbx(
+        ucx_comm.worker,
+        &(comm_snapshot[i]),
+        1,
+        ucp_tag,
+        ucp_tag_mask,
+        &params_recv);
   }
   auto start = std::chrono::system_clock::now();
   auto end = std::chrono::system_clock::now();
-  while (std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count() <=
-         torch_ucc_config.comm_state_check_timeout)
-  {
+  while (std::chrono::duration_cast<std::chrono::milliseconds>(end - start)
+             .count() <= torch_ucc_config.comm_state_check_timeout) {
     end = std::chrono::system_clock::now();
     ucx_comm.progress();
   }
-  std::map<torch_ucc_rank_state_t, std::vector<int> > state_res_;
-  for (auto i = 0; i < (int)eps->size(); i++) {
-    if (comm_state[i] != TORCH_UCC_RANK_STATE_COLLECTIVE_DONE) {
-      std::string err_log = c10::str(
-        "on rank ",
-        std::to_string(i),
-        ": ",
-        torch_ucc_rank_state_string(comm_state[i])
-      );
-      TORCH_UCC_LOG_ERROR(TORCH_UCC_COMM_CHECK, err_log);
-      if (comm_state[i] > TORCH_UCC_RANK_STATE_COLLECTIVE_DONE ||
-          comm_state[i] < TORCH_UCC_RANK_STATE_NOT_RESPONDIG) {
-        comm_state[i] = TORCH_UCC_RANK_STATE_UNKNOWN;
-      }
-    }
-    if (state_res_.find(comm_state[i]) == state_res_.end()) {
-        state_res_[comm_state[i]] = {i};
-    } else {
-        state_res_[comm_state[i]].push_back(i);
-    }
-  }
-  for (auto sr : state_res_) {
-    if (sr.first != TORCH_UCC_RANK_STATE_COLLECTIVE_DONE && sr.second.size() > 0) {
-      TORCH_UCC_LOG_ERROR(
-          TORCH_UCC_COMM_CHECK,
-          c10::str("Ranks are : ", torch_ucc_rank_state_string(sr.first),
-          " (", sr.first, "): ", sr.second));
-     }
-   }
-  TORCH_CHECK(false, c10::str(logger->getLogPrefix(),
-      "Aborting...some ranks might have issues as shown above"));
+  comms_status_health_check((int)eps->size(), my_rank);
 }
 
 void CommPG::progress_loop() {
   std::unique_lock<std::mutex> lock(mutex);
+  std::shared_ptr<ProcessGroupUCC::ProgressEntry> lastEntry = nullptr;
+  auto start_idle = std::chrono::system_clock::now();
 #ifdef USE_CUDA
   bool device_set = false;
 #endif
@@ -748,10 +860,24 @@ void CommPG::progress_loop() {
       queue_produce_cv.wait_for(lock, std::chrono::milliseconds(500));
       ucc_comm.progress();
       ucx_comm.progress();
+      /* check the comms status/snapshot if the queue is empty for a while */
+      if (std::chrono::duration_cast<std::chrono::milliseconds>(
+              std::chrono::system_clock::now() - start_idle)
+              .count() >=
+          std::chrono::duration_cast<std::chrono::milliseconds>(timeout_)
+              .count()) {
+        check_communicator_status(lastEntry);
+      }
       continue;
     }
+    start_idle = std::chrono::system_clock::now();
     collective_inprogress = true;
     auto work = progress_queue.front();
+    TORCH_UCC_COMMS_SNAPSHOT(
+        comm_snapshot[work->rank],
+        TORCH_UCC_RANK_STATE_COLLECTIVE_INPROGRESS,
+        work->seq_num_,
+        work->opType_);
     lock.unlock();
 #ifdef USE_CUDA
     if ((!device_set) && (cuda_device_index != TORCH_UCC_DEVICE_NOT_SET)) {
@@ -778,10 +904,20 @@ void CommPG::progress_loop() {
       eptr = std::current_exception();
     }
     if (work->request_->status == UCC_ERR_TIMED_OUT) {
-      check_communicator_status(work->rank, work->comm_id, work->seq_num_,
-        work->eps);
+      TORCH_UCC_COMMS_SNAPSHOT(
+          comm_snapshot[work->rank],
+          TORCH_UCC_RANK_STATE_COLLECTIVE_TIMEOUT,
+          work->seq_num_,
+          work->opType_);
+      check_communicator_status(work);
     }
     work->finalize(eptr);
+    TORCH_UCC_COMMS_SNAPSHOT(
+        comm_snapshot[work->rank],
+        TORCH_UCC_RANK_STATE_COLLECTIVE_DONE,
+        work->seq_num_,
+        work->opType_);
+    lastEntry = work;
     work = nullptr;
     collective_inprogress = false;
     queue_consume_cv.notify_one();
@@ -864,15 +1000,15 @@ void ProcessGroupUCC::set_timeout(ucc_coll_args_t& args) {
 
 #ifdef USE_CUDA
 std::unique_ptr<at::cuda::CUDAEvent> ProcessGroupUCC::getPooledEvent() {
-	std::unique_ptr<at::cuda::CUDAEvent> ev;
-	std::lock_guard<std::mutex> lock(ep.event_pool_mutex);
-	if (ep.event_pool.empty()) {
-		ev = std::make_unique<at::cuda::CUDAEvent>();
-	} else {
-		ev = std::move(ep.event_pool.front());
-		ep.event_pool.pop();
-	}
-	return ev;
+  std::unique_ptr<at::cuda::CUDAEvent> ev;
+  std::lock_guard<std::mutex> lock(ep.event_pool_mutex);
+  if (ep.event_pool.empty()) {
+    ev = std::make_unique<at::cuda::CUDAEvent>();
+  } else {
+    ev = std::move(ep.event_pool.front());
+    ep.event_pool.pop();
+  }
+  return ev;
 }
 #endif
 
@@ -898,8 +1034,8 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::collective_post(
         work->future_ = c10::make_intrusive<at::ivalue::Future>(
             c10::ListType::create(c10::TensorType::get()));
       }
-      comm->enqueue_collective(std::move(data), work, coll, team, &eps, rank_,
-        comm_id);
+      comm->enqueue_collective(
+          std::move(data), work, coll, team, &eps, rank_, comm_id);
       return work;
     }
 #ifdef USE_CUDA
@@ -945,10 +1081,10 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::allgather(
     std::vector<at::Tensor>& inputTensors,
     const AllgatherOptions& /* unused */) {
   if (size_ == 1) {
-      outputTensors[0][0].copy_(inputTensors[0]);
-      return c10::make_intrusive<ProcessGroupUCC::WorkUCC>(
-                OpType::ALLGATHER,
-                torch_ucc_config.enable_profiling ? "ucc:allgather" : nullptr);
+    outputTensors[0][0].copy_(inputTensors[0]);
+    return c10::make_intrusive<ProcessGroupUCC::WorkUCC>(
+        OpType::ALLGATHER,
+        torch_ucc_config.enable_profiling ? "ucc:allgather" : nullptr);
   }
   auto& tensor = inputTensors[0];
   check_device(tensor.device(), outputTensors[0][0].device());
@@ -1055,9 +1191,9 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::allreduce(
     std::vector<at::Tensor>& tensors,
     const AllreduceOptions& opts) {
   if (size_ == 1) {
-      return c10::make_intrusive<ProcessGroupUCC::WorkUCC>(
-                OpType::ALLREDUCE,
-                torch_ucc_config.enable_profiling ? "ucc:allreduce" : nullptr);
+    return c10::make_intrusive<ProcessGroupUCC::WorkUCC>(
+        OpType::ALLREDUCE,
+        torch_ucc_config.enable_profiling ? "ucc:allreduce" : nullptr);
   }
   check_tensor(tensors);
   auto& tensor = tensors[0];
@@ -1110,10 +1246,10 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::alltoall_base(
     std::vector<int64_t>& inputSplitSizes,
     const AllToAllOptions& /* unused */) {
   if (size_ == 1) {
-      outputTensor.copy_(inputTensor);
-      return c10::make_intrusive<ProcessGroupUCC::WorkUCC>(
-                OpType::ALLTOALL_BASE,
-                torch_ucc_config.enable_profiling ? "ucc:alltoall" : nullptr);
+    outputTensor.copy_(inputTensor);
+    return c10::make_intrusive<ProcessGroupUCC::WorkUCC>(
+        OpType::ALLTOALL_BASE,
+        torch_ucc_config.enable_profiling ? "ucc:alltoall" : nullptr);
   }
   check_device(inputTensor.device(), outputTensor.device());
   initComm(inputTensor.device());
@@ -1182,9 +1318,9 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::alltoall_base(
 c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::barrier(
     const BarrierOptions& opts) {
   if (size_ == 1) {
-      return c10::make_intrusive<ProcessGroupUCC::WorkUCC>(
-                OpType::BARRIER,
-                torch_ucc_config.enable_profiling ? "ucc:barrier" : nullptr);
+    return c10::make_intrusive<ProcessGroupUCC::WorkUCC>(
+        OpType::BARRIER,
+        torch_ucc_config.enable_profiling ? "ucc:barrier" : nullptr);
   }
   c10::Device device = c10::Device(c10::DeviceType::CPU);
 #ifdef USE_CUDA
@@ -1235,9 +1371,9 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::broadcast(
     std::vector<at::Tensor>& tensors,
     const BroadcastOptions& opts) {
   if (size_ == 1) {
-      return c10::make_intrusive<ProcessGroupUCC::WorkUCC>(
-                OpType::BROADCAST,
-                torch_ucc_config.enable_profiling ? "ucc:broadcast" : nullptr);
+    return c10::make_intrusive<ProcessGroupUCC::WorkUCC>(
+        OpType::BROADCAST,
+        torch_ucc_config.enable_profiling ? "ucc:broadcast" : nullptr);
   }
   check_tensor(tensors);
   auto& tensor = tensors[0];
@@ -1302,8 +1438,7 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::reduce_scatter(
   coll.mask = 0;
   coll.flags = 0;
   coll.coll_type = UCC_COLL_TYPE_REDUCE_SCATTER;
-	coll.op = ucc_op_map.at(opts.reduceOp);
-
+  coll.op = ucc_op_map.at(opts.reduceOp);
   coll.src.info.buffer = flat_input[0].data_ptr();
   coll.src.info.count = flat_input[0].numel();
   coll.src.info.datatype = ucc_dtype_map.at(flat_input[0].scalar_type());
@@ -1374,7 +1509,7 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::send(
       to_ucs_memType(tensor.device().type()),
       tensor.numel() * tensor.element_size(),
       ucp_tag);
-  return comm->enqueue_p2p(OpType::SEND, request, "ucc:send");
+  return comm->enqueue_p2p(OpType::SEND, request, "ucc:send", &eps, rank_, comm_id);
 }
 
 c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::recv(
@@ -1393,7 +1528,7 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::recv(
       tensor.numel() * tensor.element_size(),
       ucp_tag,
       ucp_tag_mask);
-  return comm->enqueue_p2p(OpType::RECV, request, "ucc:recv");
+  return comm->enqueue_p2p(OpType::RECV, request, "ucc:recv", &eps, rank_, comm_id);
 }
 
 c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::recvAnysource(
@@ -1412,7 +1547,7 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::recvAnysource(
       tensor.numel() * tensor.element_size(),
       ucp_tag,
       ucp_tag_mask);
-  return comm->enqueue_p2p(OpType::RECVANYSOURCE, request, "ucc:recv");
+  return comm->enqueue_p2p(OpType::RECVANYSOURCE, request, "ucc:recv", &eps, rank_, comm_id);
 }
 
 c10::intrusive_ptr<ProcessGroup> ProcessGroupUCC::createProcessGroupUCC(
@@ -1430,7 +1565,7 @@ void ProcessGroupUCC::initComm(c10::Device dev) {
       c10::cuda::set_device(dev.index());
     }
 #endif
-    comm = CommPG::get_comm(comm_id, dev, oob, logger);
+    comm = CommPG::get_comm(comm_id, dev, oob, logger, timeout_);
     comm->ucx_connect_eps(eps, oob);
     TORCH_UCC_LOG_INFO(TORCH_UCC_INIT, "Successfully initialized UCX library");
     comm->ucc_create_team(team, oob);

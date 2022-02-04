@@ -46,7 +46,7 @@
 #define TORCH_UCX_MAKE_OOB_TAG(_tag, _rank, _comm)       \
   ((((uint64_t)(_tag)) << TORCH_UCX_OOB_BITS_OFFSET) |   \
    (((uint64_t)(_rank)) << TORCH_UCX_RANK_BITS_OFFSET) | \
-   (((uint64_t)(_rank)) << TORCH_UCX_COMM_BITS_OFFSET))
+   (((uint64_t)(_comm)) << TORCH_UCX_COMM_BITS_OFFSET))
 
 #define TORCH_UCX_MAKE_SEND_TAG(_ucp_tag, _tag, _rank, _comm)      \
   do {                                                             \
@@ -77,6 +77,13 @@
   do {                                                             \
     (_ucp_tag) = TORCH_UCX_MAKE_OOB_TAG((_tag), (_rank), (_comm)); \
     (_ucp_tag_mask) = (uint64_t)-1;                                \
+  } while (0)
+
+#define TORCH_UCC_COMMS_SNAPSHOT(_snapshot, _state, _seq, _op) \
+  do {                                                         \
+    (_snapshot).state = _state;                                \
+    (_snapshot).last_seqnum = _seq;                            \
+    (_snapshot).opType = _op;                                  \
   } while (0)
 
 namespace c10d {
@@ -172,8 +179,9 @@ class TORCH_API ProcessGroupUCCLogger : public torch::CustomClassHolder {
 };
 
 enum torch_ucc_rank_state_t {
-  TORCH_UCC_RANK_STATE_NOT_RESPONDIG,
+  TORCH_UCC_RANK_STATE_NOT_RESPONDIG = 0,
   TORCH_UCC_RANK_STATE_COLLECTIVE_NOT_POSTED,
+  TORCH_UCC_RANK_STATE_COLLECTIVE_INIT,
   TORCH_UCC_RANK_STATE_COLLECTIVE_INPROGRESS,
   TORCH_UCC_RANK_STATE_COLLECTIVE_TIMEOUT,
   TORCH_UCC_RANK_STATE_DEVICE_ERROR,
@@ -183,10 +191,18 @@ enum torch_ucc_rank_state_t {
 
 const char *torch_ucc_rank_state_string(torch_ucc_rank_state_t state);
 
+typedef struct torch_ucc_rank_timeout_status_s {
+  torch_ucc_rank_state_t state;
+  uint64_t               last_seqnum;
+  OpType                 opType;
+} torch_ucc_rank_timeout_status_t;
+
 struct torch_ucc_timeout_desc_t {
+  int src;
   int rank;
   int comm_id;
   uint64_t seq_num;
+  OpType opType;
 };
 
 struct torch_ucc_oob_coll_info_t {
