@@ -9,10 +9,12 @@
  */
 
 #include "torch_ucc.hpp"
+#include "torch_ucc_comm.hpp"
 #include <memory>
 
 namespace c10d {
 
+namespace {
 constexpr int64_t kBusyWaitMillis = 10;
 
 const std::map<c10::DeviceType, ucs_memory_type_t> ucs_mtype_map = {
@@ -60,7 +62,9 @@ const std::map<ReduceOp, ucc_reduction_op_t> ucc_op_map = {
     {ReduceOp::BAND, UCC_OP_BAND},
     {ReduceOp::BOR, UCC_OP_BOR},
     {ReduceOp::BXOR, UCC_OP_BXOR},
+#if TORCH_VERSION_MAJOR > 1 || (TORCH_VERSION_MAJOR == 1 && TORCH_VERSION_MINOR >= 11)
     {ReduceOp::AVG, UCC_OP_AVG},
+#endif
 };
 
 struct torch_ucc_config_t {
@@ -73,9 +77,22 @@ struct torch_ucc_config_t {
   bool use_allgatherv;
 } torch_ucc_config;
 
-void read_confg() {
-  char* env;
+std::map<std::string, std::string> torch_ucc_envs_map = {
+    {"TORCH_UCC_ALLGATHER_BLOCKING_WAIT", "1"},
+    {"TORCH_UCC_ALLREDUCE_BLOCKING_WAIT", "1"},
+    {"TORCH_UCC_ALLTOALL_BLOCKING_WAIT", "1"},
+    {"TORCH_UCC_BCAST_BLOCKING_WAIT", "1"},
+    {"TORCH_UCC_REDUCE_SCATTER_BLOCKING_WAIT", "1"},
+    {"TORCH_UCC_USE_FUTURE", "1"},
+    {"TORCH_UCC_PROFILING_ENABLE", "0"},
+    {"TORCH_UCC_TLS", "nccl,ucp"},
+    {"TORCH_UCC_SHARED_COMM", "1"},
+    {"TORCH_UCC_USE_ALLGATHERV", "0"},
+};
 
+} // namespace
+
+void read_confg() {
   // default configuration
   torch_ucc_config.blocking_wait.fill(true);
   torch_ucc_config.enable_profiling = false;
@@ -84,51 +101,34 @@ void read_confg() {
   torch_ucc_config.use_allgatherv = false;
   torch_ucc_config.comm_state_check_timeout = 2000;
 
-  env = std::getenv("TORCH_UCC_ALLGATHER_BLOCKING_WAIT");
-  if (env) {
-    torch_ucc_config.blocking_wait[(std::uint8_t)OpType::ALLGATHER] =
-        std::atoi(env);
+  // read all torch_ucc env. variables and update the map
+  char* env;
+  for (auto& torch_ucc_env : torch_ucc_envs_map) {
+    env = std::getenv(torch_ucc_env.first.c_str());
+    if (env) {
+      torch_ucc_envs_map[torch_ucc_env.first] = std::string(env);
+    }
   }
-  env = std::getenv("TORCH_UCC_ALLREDUCE_BLOCKING_WAIT");
-  if (env) {
-    torch_ucc_config.blocking_wait[(std::uint8_t)OpType::ALLREDUCE] =
-        std::atoi(env);
-  }
-  env = std::getenv("TORCH_UCC_ALLTOALL_BLOCKING_WAIT");
-  if (env) {
-    torch_ucc_config.blocking_wait[(std::uint8_t)OpType::ALLTOALL_BASE] =
-        std::atoi(env);
-  }
-  env = std::getenv("TORCH_UCC_BCAST_BLOCKING_WAIT");
-  if (env) {
-    torch_ucc_config.blocking_wait[(std::uint8_t)OpType::BROADCAST] =
-        std::atoi(env);
-  }
-  env = std::getenv("TORCH_UCC_REDUCE_SCATTER_BLOCKING_WAIT");
-  if (env) {
-    torch_ucc_config.blocking_wait[(std::uint8_t)OpType::REDUCE_SCATTER] =
-        std::atoi(env);
-  }
-  env = std::getenv("TORCH_UCC_USE_FUTURE");
-  if (env) {
-    torch_ucc_config.use_future = !!std::atoi(env);
-  }
-  env = std::getenv("TORCH_UCC_PROFILING_ENABLE");
-  if (env) {
-    torch_ucc_config.enable_profiling = !!std::atoi(env);
-  }
-  env = std::getenv("TORCH_UCC_SHARED_COMM");
-  if (env) {
-    torch_ucc_config.shared_comm = !!std::atoi(env);
-  }
-  env = std::getenv("TORCH_UCC_COMM_CHECK_TIMEOUT");
-  if (env) {
-    torch_ucc_config.comm_state_check_timeout = std::atoi(env);
-  }
-  env = std::getenv("TORCH_UCC_USE_ALLGATHERV");
-  if (env) {
-    torch_ucc_config.use_allgatherv = !!std::atoi(env);
-  }
+  torch_ucc_config.blocking_wait[(std::uint8_t)OpType::ALLGATHER] =
+      std::stoi(torch_ucc_envs_map.at("TORCH_UCC_ALLGATHER_BLOCKING_WAIT"));
+  torch_ucc_config.blocking_wait[(std::uint8_t)OpType::ALLREDUCE] =
+      std::stoi(torch_ucc_envs_map.at("TORCH_UCC_ALLREDUCE_BLOCKING_WAIT"));
+  torch_ucc_config.blocking_wait[(std::uint8_t)OpType::ALLTOALL_BASE] =
+      std::stoi(torch_ucc_envs_map.at("TORCH_UCC_ALLTOALL_BLOCKING_WAIT"));
+  torch_ucc_config.blocking_wait[(std::uint8_t)OpType::BROADCAST] =
+      std::stoi(torch_ucc_envs_map.at("TORCH_UCC_BCAST_BLOCKING_WAIT"));
+  torch_ucc_config.blocking_wait[(std::uint8_t)OpType::REDUCE_SCATTER] =
+      std::stoi(torch_ucc_envs_map.at("TORCH_UCC_REDUCE_SCATTER_BLOCKING_WAIT"));
+  torch_ucc_config.use_future =
+      std::stoi(torch_ucc_envs_map.at("TORCH_UCC_USE_FUTURE"));
+  torch_ucc_config.enable_profiling =
+      std::stoi(torch_ucc_envs_map.at("TORCH_UCC_PROFILING_ENABLE"));
+  torch_ucc_config.shared_comm =
+      std::stoi(torch_ucc_envs_map.at("TORCH_UCC_SHARED_COMM"));
+  torch_ucc_config.use_allgatherv =
+      std::stoi(torch_ucc_envs_map.at("TORCH_UCC_USE_ALLGATHERV"));
+  torch_ucc_config.comm_state_check_timeout =
+      std::stoi(torch_ucc_envs_map.at("TORCH_UCC_COMM_CHECK_TIMEOUT"));
 }
 
 void check_device(c10::Device dev1, c10::Device dev2) {
@@ -811,8 +811,16 @@ ProcessGroupUCC::ProcessGroupUCC(
       TORCH_UCC_INIT);
   TORCH_UCC_LOG_INFO(
       TORCH_UCC_INIT,
-      "Successfully read and set ProcessGroupUCC env. variables");
-  // TODO: print log of all env. variables and their values
+      c10::str("Created ProcessGroupUCC with ", size, " ranks, with timeout ", timeout_.count(), " secs"));
+  std::string envs = "";
+  for (auto& torch_ucc_env : torch_ucc_envs_map) {
+    envs += ("\n\t" + torch_ucc_env.first + "=" + torch_ucc_env.second);
+  }
+  TORCH_UCC_LOG_INFO(
+      TORCH_UCC_INIT,
+      c10::str(
+          "Successfully read and set ProcessGroupUCC env. variables as followings",
+          envs));
 }
 
 ProcessGroupUCC::~ProcessGroupUCC() {
@@ -836,8 +844,13 @@ ProcessGroupUCC::~ProcessGroupUCC() {
         oob->store->wait({oob->getKey("ucc_pg_finished")});
       }
     } catch (std::exception& ex) {
-      LOG(ERROR) << "(~ProcessGroupUCC) Caught error in Store Operation .. "
-                 << "[" << ex.what() << "]";
+      TORCH_UCC_LOG_INFO(
+        TORCH_UCC_FINALIZE,
+        c10::str(
+          "(~ProcessGroupUCC) Caught error in Store Operation .. ",
+          "[",
+          ex.what(),
+          "]"));
     }
     comm = nullptr;
   }
