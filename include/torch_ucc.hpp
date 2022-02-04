@@ -32,47 +32,6 @@ namespace c10d {
 
 #define TORCH_UCC_DEVICE_NOT_SET -2
 
-#define TORCH_UCX_MAKE_P2P_TAG(_tag, _rank, _comm)       \
-  ((((uint64_t)(_tag)) << TORCH_UCX_TAG_BITS_OFFSET) |   \
-   (((uint64_t)(_rank)) << TORCH_UCX_RANK_BITS_OFFSET) | \
-   (((uint64_t)(_comm)) << TORCH_UCX_COMM_BITS_OFFSET))
-
-#define TORCH_UCX_MAKE_OOB_TAG(_tag, _rank, _comm)       \
-  ((((uint64_t)(_tag)) << TORCH_UCX_OOB_BITS_OFFSET) |   \
-   (((uint64_t)(_rank)) << TORCH_UCX_RANK_BITS_OFFSET) | \
-   (((uint64_t)(_rank)) << TORCH_UCX_COMM_BITS_OFFSET))
-
-#define TORCH_UCX_MAKE_SEND_TAG(_ucp_tag, _tag, _rank, _comm)      \
-  do {                                                             \
-    (_ucp_tag) = TORCH_UCX_MAKE_P2P_TAG((_tag), (_rank), (_comm)); \
-  } while (0)
-
-#define TORCH_UCX_ANY_SOURCE (TORCH_UCX_MAX_RANK - 1)
-#define TORCH_UCX_ANY_SOURCE_MASK (~TORCH_UCX_RANK_MASK)
-#define TORCH_UCX_SPECIFIC_SOURCE_MASK ((uint64_t)-1)
-
-#define TORCH_UCX_MAKE_RECV_TAG(_ucp_tag, _ucp_tag_mask, _tag, _rank, _comm) \
-  do {                                                                       \
-    (_ucp_tag) = TORCH_UCX_MAKE_P2P_TAG((_tag), (_rank), (_comm));           \
-    if ((_rank) == TORCH_UCX_ANY_SOURCE) {                                   \
-      (_ucp_tag_mask) = TORCH_UCX_ANY_SOURCE_MASK;                           \
-    } else {                                                                 \
-      (_ucp_tag_mask) = TORCH_UCX_SPECIFIC_SOURCE_MASK;                      \
-    }                                                                        \
-  } while (0)
-
-#define TORCH_UCX_MAKE_OOB_SEND_TAG(_ucp_tag, _tag, _rank, _comm)  \
-  do {                                                             \
-    (_ucp_tag) = TORCH_UCX_MAKE_OOB_TAG((_tag), (_rank), (_comm)); \
-  } while (0)
-
-#define TORCH_UCX_MAKE_OOB_RECV_TAG(                               \
-    _ucp_tag, _ucp_tag_mask, _tag, _rank, _comm)                   \
-  do {                                                             \
-    (_ucp_tag) = TORCH_UCX_MAKE_OOB_TAG((_tag), (_rank), (_comm)); \
-    (_ucp_tag_mask) = (uint64_t)-1;                                \
-  } while (0)
-
 #ifdef USE_CUDA
 #define SAVE_TENSORS(_TENSORS, _DATA)                       \
   do {                                                      \
@@ -145,15 +104,21 @@ class ProcessGroupUCC : public ProcessGroup {
   public:
     ProgressEntry(
         CommBase* comm,
-        ucc_coll_req_h request)
-        : status_(UCC_INPROGRESS), comm_(comm), request_(request) {}
+        ucc_coll_req_h request,
+        uint64_t seq_num)
+        : status_(UCC_INPROGRESS), comm_(comm), request_(request),
+          seq_num_(seq_num) {}
     void finalize(std::exception_ptr eptr = nullptr);
     ucc_status_t status_;
     CommBase* comm_;
     ucc_coll_req_h request_;
+    uint64_t seq_num_;
     std::unique_ptr<WorkData> data;
     c10::intrusive_ptr<c10::ivalue::Future> future_;
     std::exception_ptr eptr_;
+    std::vector<ucp_ep_h> *eps;
+    int rank;
+    int comm_id;
   };
 
   class WorkUCC : public ProcessGroup::Work {
@@ -311,9 +276,11 @@ template <typename PreProcess, typename PostProcess>
 
 class CommPG {
   c10::intrusive_ptr<ProcessGroupUCCLogger> logger;
+  std::vector<torch_ucc_rank_state_t> comm_state;
   std::shared_ptr<torch_ucc_oob_coll_info_t> oob;
   CommUCX ucx_comm;
   CommUCC ucc_comm;
+  uint64_t seq_num;
   c10::DeviceIndex device_index;
   std::mutex mutex;
   std::thread progress_thread;
@@ -323,6 +290,8 @@ class CommPG {
   bool stop_progress_loop;
   bool collective_inprogress;
 
+  void check_communicator_status(int my_rank, int comm_id, uint64_t seq_num,
+      std::vector<ucp_ep_h> *eps);
  public:
   c10::DeviceIndex cuda_device_index;
   CommPG(const c10::intrusive_ptr<ProcessGroupUCCLogger>& logger,
@@ -355,14 +324,21 @@ class CommPG {
       c10::intrusive_ptr<ProcessGroupUCC::WorkUCC> work,
       ucc_coll_args_t& coll,
       ucc_team_h team,
-      ucc_ee_h ee);
+      ucc_ee_h ee,
+      std::vector<ucp_ep_h> *eps,
+      int rank,
+      int comm_id);
+
 #endif
 
   void enqueue_collective(
       std::unique_ptr<ProcessGroupUCC::WorkData> data,
       c10::intrusive_ptr<ProcessGroupUCC::WorkUCC> work,
       ucc_coll_args_t& coll,
-      ucc_team_h team);
+      ucc_team_h team,
+      std::vector<ucp_ep_h> *eps,
+      int rank,
+      int comm_id);
 
   static std::shared_ptr<CommPG> get_comm(
       uint32_t& id,
@@ -385,6 +361,13 @@ class CommPG {
       size_t size,
       ucp_tag_t ucp_tag,
       ucp_tag_t ucp_tag_mask);
+  friend ucs_status_t torch_ucc_timeout_am_cb(
+      void *arg,
+      const void *header,
+      size_t header_length,
+      void *data,
+      size_t length,
+      const ucp_am_recv_param_t *param);
 };
 
 } // namespace c10d

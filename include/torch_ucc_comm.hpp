@@ -36,6 +36,49 @@
 #define TORCH_UCX_TAG_MASK (TORCH_UCX_MAX_TAG << TORCH_UCX_TAG_BITS_OFFSET)
 #define TORCH_UCX_OOB_MASK (TORCH_UCX_MAX_OOB << TORCH_UCX_OOB_BITS_OFFSET)
 
+#define TORCH_UCC_TIMEOUT_AM_ID 0
+
+#define TORCH_UCX_MAKE_P2P_TAG(_tag, _rank, _comm)       \
+  ((((uint64_t)(_tag)) << TORCH_UCX_TAG_BITS_OFFSET) |   \
+   (((uint64_t)(_rank)) << TORCH_UCX_RANK_BITS_OFFSET) | \
+   (((uint64_t)(_comm)) << TORCH_UCX_COMM_BITS_OFFSET))
+
+#define TORCH_UCX_MAKE_OOB_TAG(_tag, _rank, _comm)       \
+  ((((uint64_t)(_tag)) << TORCH_UCX_OOB_BITS_OFFSET) |   \
+   (((uint64_t)(_rank)) << TORCH_UCX_RANK_BITS_OFFSET) | \
+   (((uint64_t)(_rank)) << TORCH_UCX_COMM_BITS_OFFSET))
+
+#define TORCH_UCX_MAKE_SEND_TAG(_ucp_tag, _tag, _rank, _comm)      \
+  do {                                                             \
+    (_ucp_tag) = TORCH_UCX_MAKE_P2P_TAG((_tag), (_rank), (_comm)); \
+  } while (0)
+
+#define TORCH_UCX_ANY_SOURCE (TORCH_UCX_MAX_RANK - 1)
+#define TORCH_UCX_ANY_SOURCE_MASK (~TORCH_UCX_RANK_MASK)
+#define TORCH_UCX_SPECIFIC_SOURCE_MASK ((uint64_t)-1)
+
+#define TORCH_UCX_MAKE_RECV_TAG(_ucp_tag, _ucp_tag_mask, _tag, _rank, _comm) \
+  do {                                                                       \
+    (_ucp_tag) = TORCH_UCX_MAKE_P2P_TAG((_tag), (_rank), (_comm));           \
+    if ((_rank) == TORCH_UCX_ANY_SOURCE) {                                   \
+      (_ucp_tag_mask) = TORCH_UCX_ANY_SOURCE_MASK;                           \
+    } else {                                                                 \
+      (_ucp_tag_mask) = TORCH_UCX_SPECIFIC_SOURCE_MASK;                      \
+    }                                                                        \
+  } while (0)
+
+#define TORCH_UCX_MAKE_OOB_SEND_TAG(_ucp_tag, _tag, _rank, _comm)  \
+  do {                                                             \
+    (_ucp_tag) = TORCH_UCX_MAKE_OOB_TAG((_tag), (_rank), (_comm)); \
+  } while (0)
+
+#define TORCH_UCX_MAKE_OOB_RECV_TAG(                               \
+    _ucp_tag, _ucp_tag_mask, _tag, _rank, _comm)                   \
+  do {                                                             \
+    (_ucp_tag) = TORCH_UCX_MAKE_OOB_TAG((_tag), (_rank), (_comm)); \
+    (_ucp_tag_mask) = (uint64_t)-1;                                \
+  } while (0)
+
 namespace c10d {
 
 // Macro to throw on a non-successful UCC return value.
@@ -99,6 +142,7 @@ enum torch_ucc_phase_t {
   TORCH_UCC_COLL_POST,
   TORCH_UCC_COLL_PROGRESS,
   TORCH_UCC_FINALIZE,
+  TORCH_UCC_COMM_CHECK
 };
 
 const std::map<torch_ucc_phase_t, std::string> ucc_phase_map = {
@@ -108,6 +152,7 @@ const std::map<torch_ucc_phase_t, std::string> ucc_phase_map = {
     {TORCH_UCC_COLL_POST, "COLL_POST"},
     {TORCH_UCC_COLL_PROGRESS, "COLL_PROGRESS"},
     {TORCH_UCC_FINALIZE, "FINALIZE"},
+    {TORCH_UCC_COMM_CHECK, "COMM_CHECK"}
 };
 
 class TORCH_API ProcessGroupUCCLogger : public torch::CustomClassHolder {
@@ -124,6 +169,24 @@ class TORCH_API ProcessGroupUCCLogger : public torch::CustomClassHolder {
  protected:
   std::string log_prefix;
   torch_ucc_phase_t local_phase = TORCH_UCC_UNKNOWN;
+};
+
+enum torch_ucc_rank_state_t {
+  TORCH_UCC_RANK_STATE_NOT_RESPONDIG,
+  TORCH_UCC_RANK_STATE_COLLECTIVE_NOT_POSTED,
+  TORCH_UCC_RANK_STATE_COLLECTIVE_INPROGRESS,
+  TORCH_UCC_RANK_STATE_COLLECTIVE_TIMEOUT,
+  TORCH_UCC_RANK_STATE_DEVICE_ERROR,
+  TORCH_UCC_RANK_STATE_COLLECTIVE_DONE,
+  TORCH_UCC_RANK_STATE_UNKNOWN
+};
+
+const char *torch_ucc_rank_state_string(torch_ucc_rank_state_t state);
+
+struct torch_ucc_timeout_desc_t {
+  int rank;
+  int comm_id;
+  uint64_t seq_num;
 };
 
 struct torch_ucc_oob_coll_info_t {
@@ -154,11 +217,12 @@ class CommUCX : public CommBase {
   ucp_worker_h worker{nullptr};
 
  public:
-  void progress() override;
-  void free_request(ucc_coll_req_h request) override;
   CommUCX(
       int comm_size,
       const c10::intrusive_ptr<ProcessGroupUCCLogger>& logger);
+  void progress() override;
+  void free_request(ucc_coll_req_h request) override;
+  void set_am_recv_handler(const ucp_am_handler_param_t *params);
   ~CommUCX();
 };
 
