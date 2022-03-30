@@ -16,7 +16,7 @@ jobs:
     - name: Install packages
       run: |
         apt-get update
-        apt-get install -y --no-install-recommends build-essential git cmake libtool-bin wget autoconf automake
+        apt-get install -y --no-install-recommends build-essential git cmake libtool-bin wget autoconf automake clang
         conda uninstall -y pytorch torchvision
         pip3 install --pre torch -f https://download.pytorch.org/whl/nightly/cpu/torch_nightly.html
     - name: Get UCX
@@ -24,19 +24,19 @@ jobs:
         git clone ${OPENUCX_LINK} /tmp/ucx
         cd /tmp/ucx
         ./autogen.sh
-        ./contrib/configure-release-mt --without-java --disable-numa --prefix=/opt/ucx
+        CC=clang CXX=clang++ ./contrib/configure-release-mt --without-java --disable-numa --prefix=/opt/ucx
         make -j install
     - name: Get UCC
       run: |
         git clone ${UCC_LINK} /tmp/ucc
         cd /tmp/ucc
         ./autogen.sh
-        ./configure --with-ucx=/opt/ucx --prefix=/opt/ucc
+        CC=clang CXX=clang++ ./configure --with-ucx=/opt/ucx --prefix=/opt/ucc
         make -j install
     - uses: actions/checkout@v1
     - name: Build with UCX and UCC
       run: |
-        UCX_HOME=/opt/ucx/ UCC_HOME=/opt/ucc/ WITH_CUDA=no python setup.py install
+        CC=clang CXX=clang++ UCX_HOME=/opt/ucx/ UCC_HOME=/opt/ucc/ WITH_CUDA=no python setup.py install
     - name: Tests
       run: |
         export LD_LIBRARY_PATH=/opt/ucx/lib:/opt/ucc/lib:$LD_LIBRARY_PATH
