@@ -3,7 +3,7 @@
 
 using namespace c10d;
 
-extern "C" C10_EXPORT c10::intrusive_ptr<ProcessGroup> createProcessGroupUCCForNCCL(
+extern "C" C10_EXPORT c10::intrusive_ptr<ProcessGroup> createProcessGroupUCC(
   const c10::intrusive_ptr<Store>& store,
   int rank, int size
 ) {
