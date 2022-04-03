@@ -1,4 +1,3 @@
-import os
 from torch_ucc_test_setup import *
 
 # create 2 UCC PGs
