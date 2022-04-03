@@ -64,7 +64,7 @@ if args.backend == "nccl" and not args.use_cuda:
     sys.exit(0)
 
 if args.use_cuda:
-    #    torch.cuda.set_device(comm_rank)
+    torch.cuda.set_device(comm_rank)
     args.device = torch.device("cuda")
 else:
     args.device = torch.device("cpu")
@@ -96,7 +96,7 @@ while size <= args.max_size:
         if i > args.skip:
             time += finish - start
     time = [time / args.iter]
-    if args.backend == "nccl":
+    if args.use_cuda:
         max_time = torch.tensor([time], device=args.device)
         min_time = torch.tensor([time], device=args.device)
         avg_time = torch.tensor([time], device=args.device)
