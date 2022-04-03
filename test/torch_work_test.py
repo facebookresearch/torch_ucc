@@ -9,8 +9,10 @@
 
 from torch_ucc_test_setup import *
 
+
 def test_future(obj):
     print("Test WorkUCC: succeeded")
+
 
 args = parse_test_args()
 pg = init_process_groups(args.backend, args.use_cuda)
@@ -19,7 +21,7 @@ comm_size = dist.get_world_size()
 comm_rank = dist.get_rank()
 
 print_test_head("WorkUCC", comm_rank)
-count=32
+count = 32
 tensor_ucc = get_tensor(count, args.use_cuda)
 
 work = dist.all_reduce(tensor_ucc, async_op=True)

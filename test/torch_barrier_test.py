@@ -7,9 +7,9 @@
 # LICENSE file in the root directory of this source tree.
 #
 
-import time
-import sys
 import random
+import sys
+import time
 from torch_ucc_test_setup import *
 
 args = parse_test_args()
@@ -20,7 +20,7 @@ comm_rank = dist.get_rank()
 
 for i in range(comm_size):
     rand_sleep = random.randint(1, 1000)
-    time.sleep(rand_sleep/1000)
+    time.sleep(rand_sleep / 1000)
     if i == comm_rank:
         print("rank {} checks in".format(comm_rank))
         sys.stdout.flush()

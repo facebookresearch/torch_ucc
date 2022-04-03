@@ -7,30 +7,30 @@
 # LICENSE file in the root directory of this source tree.
 #
 
+import argparse
 import os
 import sys
-import argparse
+
 import torch
 import torch.distributed as dist
-import torch_ucc
 
 parser = argparse.ArgumentParser(description="Process Group UCC test")
-parser.add_argument("--backend", type=str, default='mpi')
-parser.add_argument("--op", type=str, default='p2p')
+parser.add_argument("--backend", type=str, default="mpi")
+parser.add_argument("--op", type=str, default="p2p")
 parser.add_argument("--use-cuda", type=bool, default=False)
 args = parser.parse_args()
 
 try:
-    size = int(os.environ['OMPI_COMM_WORLD_SIZE'])
-    rank = int(os.environ['OMPI_COMM_WORLD_RANK'])
+    size = int(os.environ["OMPI_COMM_WORLD_SIZE"])
+    rank = int(os.environ["OMPI_COMM_WORLD_RANK"])
 except:
-    print('OMPI env variables are not found')
+    print("OMPI env variables are not found")
     sys.exit(1)
 
-os.environ['MASTER_PORT'] = '32167'
-os.environ['MASTER_ADDR'] = 'localhost'
-os.environ['RANK']        = str(rank)
-os.environ['WORLD_SIZE']  = str(size)
+os.environ["MASTER_PORT"] = "32167"
+os.environ["MASTER_ADDR"] = "localhost"
+os.environ["RANK"] = str(rank)
+os.environ["WORLD_SIZE"] = str(size)
 
 
 torch.cuda.set_device(rank)
@@ -62,8 +62,8 @@ elif args.op == "reduce":
 elif args.op == "alltoall":
     dist.all_to_all_single(t2, t)
 elif args.op == "alltoallv":
-    out_split =[1]*size
-    in_split = [1]*size
+    out_split = [1] * size
+    in_split = [1] * size
     dist.all_to_all_single(t2, t, out_split, in_split)
 elif args.op == "allgather":
     dist.all_gather([t1, t2], t)
@@ -72,6 +72,6 @@ else:
     print("Incorrect operation")
     sys.exit(1)
 
-#dist.barrier()
-print('rank ', rank, ':', t, ":", t1, ":", t2)
+# dist.barrier()
+print("rank ", rank, ":", t, ":", t1, ":", t2)
 dist.destroy_process_group()

@@ -21,7 +21,7 @@ print_test_head("Reduce_scatter", comm_rank)
 for count in counts:
     tensors_input = []
     for p in range(comm_size):
-        tensors_input.append(get_tensor(count, args.use_cuda));
+        tensors_input.append(get_tensor(count, args.use_cuda))
     tensor_ucc = get_tensor(count, args.use_cuda)
     tensor_test = tensor_ucc.clone()
     tensors_input[0] = do_compute(tensors_input[0])
