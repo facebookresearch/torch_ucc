@@ -7,7 +7,7 @@
 # LICENSE file in the root directory of this source tree.
 #
 
-import sys
+
 import numpy as np
 from torch_ucc_test_setup import *
 
@@ -24,8 +24,8 @@ for count in counts:
     tensors_out_ucc = []
     tensors_out_test = []
     for p in range(comm_size):
-        tensors_out_ucc.append(get_tensor(count, args.use_cuda));
-        tensors_out_test.append(get_tensor(count, args.use_cuda));
+        tensors_out_ucc.append(get_tensor(count, args.use_cuda))
+        tensors_out_test.append(get_tensor(count, args.use_cuda))
     dist.all_gather(tensors_out_ucc, tensor_input)
     dist.all_gather(tensors_out_test, tensor_input, group=pg)
     status = check_tensor_list_equal(tensors_out_ucc, tensors_out_test)
