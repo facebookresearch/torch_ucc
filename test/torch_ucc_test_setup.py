@@ -61,20 +61,24 @@ def init_process_groups(bend, use_cuda, to=timedelta(seconds=60)):
     return pg
 
 
-def check_tensor_equal(t1, t2):
-    if torch.all(torch.eq(t1, t2)):
-        return torch.tensor(1, device=t1.device)
+# Compare UCC result tensor with the checking PG's result tensor.
+# Return check status allocated on PG's device because the result is exchanged by PG
+def check_tensor_equal(t_ucc, t_pg):
+    if torch.all(torch.eq(t_ucc, t_pg)):
+        return torch.tensor(1, device=t_pg.device)
     else:
         print("failed on rank {}".format(os.environ["RANK"]))
-        return torch.tensor(0, device=t1.device)
+        return torch.tensor(0, device=t_pg.device)
 
 
-def check_tensor_list_equal(t1, t2):
-    num_tensors = len(t1)
+# Compare UCC result tensor list with the checking PG's result tensor list.
+# Return check status allocated on PG's device because the result is exchanged by PG
+def check_tensor_list_equal(t_ucc, t_pg):
+    num_tensors = len(t_ucc)
     for i in range(num_tensors):
-        if not torch.all(torch.eq(t1[i], t2[i])):
-            return torch.tensor(0, device=t1[i].device)
-    return torch.tensor(1, device=t1[i].device)
+        if not torch.all(torch.eq(t_ucc[i], t_pg[i])):
+            return torch.tensor(0, device=t_pg[i].device)
+    return torch.tensor(1, device=t_pg[i].device)
 
 
 def print_test_head(test_name, comm_rank):
