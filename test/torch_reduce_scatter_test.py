@@ -23,10 +23,10 @@ for count in counts:
     for p in range(comm_size):
         tensors_input.append(get_tensor(count, args.use_cuda))
     tensor_ucc = get_tensor(count, args.use_cuda)
-    tensor_test = tensor_ucc.clone()
+    tensor_test = tensor_ucc.cpu()
     tensors_input[0] = do_compute(tensors_input[0])
     dist.reduce_scatter(tensor_ucc, tensors_input)
-    dist.reduce_scatter(tensor_test, tensors_input, group=pg)
+    dist.reduce_scatter(tensor_test, [t.cpu() for t in tensors_input], group=pg)
     status = check_tensor_equal(tensor_ucc, tensor_test)
     dist.all_reduce(status, group=pg)
     print_test_result(status, count, comm_rank, comm_size)

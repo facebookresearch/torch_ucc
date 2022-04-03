@@ -30,6 +30,16 @@ def parse_test_args():
         print("CUDA is not available")
         sys.exit(0)
 
+    # Tensor mem type support seems to rely on static definition at https://pytorch.org/docs/stable/distributed.html
+    valid_bends = ["mpi", "ucc", "gloo"]
+    if args.backend not in valid_bends:
+        print(
+            "The specified backend {} does not support CPU tensors for result validation. Please choose from {}".format(
+                args.backend, ", ".join(valid_bends)
+            )
+        )
+        sys.exit(0)
+
     return args
 
 
@@ -64,6 +74,9 @@ def init_process_groups(bend, use_cuda, to=timedelta(seconds=60)):
 # Compare UCC result tensor with the checking PG's result tensor.
 # Return check status allocated on PG's device because the result is exchanged by PG
 def check_tensor_equal(t_ucc, t_pg):
+    # Copy to CPU before comparing with PG's resut which is always on CPU
+    if t_ucc.is_cuda:
+        t_ucc = t_ucc.cpu()
     if torch.all(torch.eq(t_ucc, t_pg)):
         return torch.tensor(1, device=t_pg.device)
     else:
@@ -76,6 +89,9 @@ def check_tensor_equal(t_ucc, t_pg):
 def check_tensor_list_equal(t_ucc, t_pg):
     num_tensors = len(t_ucc)
     for i in range(num_tensors):
+        # Copy to CPU before comparing with PG's resut which is always on CPU
+        if t_ucc[i].is_cuda:
+            t_ucc[i] = t_ucc[i].cpu()
         if not torch.all(torch.eq(t_ucc[i], t_pg[i])):
             return torch.tensor(0, device=t_pg[i].device)
     return torch.tensor(1, device=t_pg[i].device)
