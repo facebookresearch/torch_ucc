@@ -24,9 +24,9 @@ for count in counts:
     tensor_test = do_compute(tensor_test)
     # pt2pt-based bcast if more than 2 processes
     if comm_rank == 0:
-        for dst in range(comm_size-1):
-            dist.send(tensor_ucc, dst=dst+1, tag=0)
-            dist.send(tensor_test, dst=dst+1, tag=0, group=pg)
+        for dst in range(comm_size - 1):
+            dist.send(tensor_ucc, dst=dst + 1, tag=0)
+            dist.send(tensor_test, dst=dst + 1, tag=0, group=pg)
         status = torch.tensor(1, device=tensor_ucc.device)
     else:
         dist.recv(tensor_ucc, src=0, tag=0)

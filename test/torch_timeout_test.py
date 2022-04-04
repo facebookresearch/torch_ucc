@@ -7,9 +7,8 @@
 # LICENSE file in the root directory of this source tree.
 #
 
-import time
 import sys
-import random
+import time
 from torch_ucc_test_setup import *
 from datetime import timedelta
 
@@ -21,17 +20,17 @@ comm_rank = dist.get_rank()
 
 dist.barrier()
 if comm_rank == 0:
-  time.sleep(20)
+    time.sleep(20)
 
 estr = ""
 try:
-  req = dist.barrier()
+    req = dist.barrier()
 except Exception as e:
-  estr = str(e)
+    estr = str(e)
 
 if comm_rank != 0:
-  if "Timeout expired" in estr:
-    print("Test OK")
-  else:
-    print("Test Failed")
-    sys.exit(1)
+    if "Timeout expired" in estr:
+        print("Test OK")
+    else:
+        print("Test Failed")
+        sys.exit(1)
