@@ -20,7 +20,6 @@ constexpr int64_t kBusyWaitMillis = 10;
 const std::map<c10::DeviceType, ucs_memory_type_t> ucs_mtype_map = {
     {c10::kCPU, UCS_MEMORY_TYPE_HOST},
     {c10::kCUDA, UCS_MEMORY_TYPE_CUDA},
-    {c10::kHIP, UCS_MEMORY_TYPE_ROCM},
 };
 
 ucs_memory_type_t to_ucs_memType(c10::DeviceType _c10_type) {
@@ -33,7 +32,6 @@ ucs_memory_type_t to_ucs_memType(c10::DeviceType _c10_type) {
 const std::map<c10::DeviceType, ucc_memory_type_t> ucc_mtype_map = {
     {c10::kCPU, UCC_MEMORY_TYPE_HOST},
     {c10::kCUDA, UCC_MEMORY_TYPE_CUDA},
-    {c10::kHIP, UCC_MEMORY_TYPE_ROCM},
 };
 
 ucc_memory_type_t to_ucc_memType(c10::DeviceType _c10_type) {

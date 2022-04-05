@@ -10,6 +10,7 @@
 import os
 import sys
 from setuptools import setup
+import torch
 from torch.utils import cpp_extension
 
 ucc_plugin_dir = os.path.dirname(os.path.abspath(__file__))
@@ -31,6 +32,19 @@ else:
   print("Debug build")
   plugin_compile_args.extend(["-g", "-O0"])
 
+TORCH_MAJOR = int(torch.__version__.split('.')[0])
+TORCH_MINOR = int(torch.__version__.split('.')[1])
+
+def check_if_rocm_pytorch():
+    is_rocm_pytorch = False
+    if TORCH_MAJOR > 1 or (TORCH_MAJOR == 1 and TORCH_MINOR >= 5):
+        from torch.utils.cpp_extension import ROCM_HOME
+        is_rocm_pytorch = True if ((torch.version.hip is not None) and (ROCM_HOME is not None)) else False
+
+    return is_rocm_pytorch
+
+IS_ROCM_PYTORCH = check_if_rocm_pytorch()
+
 plugin_sources      = ["src/torch_ucc.cpp",
                        "src/torch_ucc_comm.cpp"]
 plugin_include_dirs = ["{}/include/".format(ucc_plugin_dir),
@@ -45,6 +59,27 @@ if '--oss' in sys.argv:
   plugin_sources += ["src/torch_ucc_init_oss.cpp"]
 else:
   plugin_sources += ["src/torch_ucc_init.cpp"]
+
+CUDA_TO_HIP_MAPPINGS = [
+  ('UCS_MEMORY_TYPE_CUDA', 'UCS_MEMORY_TYPE_ROCM'),
+  ('UCC_MEMORY_TYPE_CUDA', 'UCC_MEMORY_TYPE_ROCM')
+]
+
+# Overwrite each source file for hipification
+def torch_ucc_hipify(src_path_list):
+  for src_path in src_path_list:
+    print("Torch-UCC hipification applied to " + src_path)
+    with open(src_path, 'rt', encoding='utf-8') as fin:
+      fin.seek(0)
+      source = fin.read()
+      for k, v in CUDA_TO_HIP_MAPPINGS:
+        source = source.replace(k, v)
+      fin.close()
+
+    with open(src_path, 'wt', encoding='utf-8') as fout:
+      fout.write(source)
+      fout.close()
+
 
 with_cuda = os.environ.get("WITH_CUDA")
 if with_cuda is None or with_cuda == "no":
@@ -68,6 +103,10 @@ else:
         libraries = plugin_libraries,
         extra_compile_args=plugin_compile_args
     )
+    # Apply Torch-UCC specific hipification after Pytorch hipification
+    if IS_ROCM_PYTORCH:
+      torch_ucc_hipify(module.sources)
+
 setup(
     name = "torch-ucc",
     version = "1.0.0",
