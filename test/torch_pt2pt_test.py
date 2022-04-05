@@ -19,9 +19,8 @@ print_test_head("Point-to-point", comm_rank)
 
 for count in counts:
     tensor_ucc = get_tensor(count, args.use_cuda)
-    tensor_test = tensor_ucc.clone()
     tensor_ucc = do_compute(tensor_ucc)
-    tensor_test = do_compute(tensor_test)
+    tensor_test = tensor_ucc.cpu()
     # pt2pt-based bcast if more than 2 processes
     if comm_rank == 0:
         for dst in range(comm_size - 1):

@@ -25,9 +25,9 @@ for count in counts:
     tensors_out_test = []
     for p in range(comm_size):
         tensors_out_ucc.append(get_tensor(count, args.use_cuda))
-        tensors_out_test.append(get_tensor(count, args.use_cuda))
+        tensors_out_test.append(get_tensor(count, is_cuda=False))
     dist.all_gather(tensors_out_ucc, tensor_input)
-    dist.all_gather(tensors_out_test, tensor_input, group=pg)
+    dist.all_gather(tensors_out_test, tensor_input.cpu(), group=pg)
     status = check_tensor_list_equal(tensors_out_ucc, tensors_out_test)
     dist.all_reduce(status, group=pg)
     print_test_result(status, count, comm_rank, comm_size)
