@@ -27,7 +27,7 @@ for count in counts:
         for dst in range(comm_size - 1):
             dist.send(tensor_ucc, dst=dst + 1, tag=0)
             dist.send(tensor_test, dst=dst + 1, tag=0, group=pg)
-        status = torch.tensor(1, device=tensor_ucc.device)
+        status = torch.tensor(1, device=tensor_test.device)
     else:
         dist.recv(tensor_ucc, src=0, tag=0)
         dist.recv(tensor_test, src=0, tag=0, group=pg)
