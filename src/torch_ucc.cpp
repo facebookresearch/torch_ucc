@@ -916,10 +916,74 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::allreduce_coalesced(
 }
 
 c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::alltoall(
-    std::vector<at::Tensor>& /* unused */,
-    std::vector<at::Tensor>& /* unused */,
+    std::vector<at::Tensor>& outputTensors,
+    std::vector<at::Tensor>& inputTensors,
     const AllToAllOptions& /* unused */) {
-  throw std::runtime_error("ProcessGroupUCC does not support alltoall");
+  auto device = outputTensors[0].device();
+  for (const auto r : c10::irange(outputTensors.size())) {
+    TORCH_CHECK(
+        device == outputTensors[r].device() &&
+            device == inputTensors[r].device(),
+        "Tensors must be on the same device")
+  }
+  if (size_ == 1) {
+    for (const auto r : c10::irange(outputTensors.size())) {
+      outputTensors[r].copy_(inputTensors[r]);
+    }
+    return c10::make_intrusive<ProcessGroupUCC::WorkUCC>(
+        OpType::ALLTOALL,
+        torch_ucc_config.enable_profiling ? "ucc:alltoall" : nullptr);
+  }
+
+  initComm(device);
+  ucc_coll_args_t coll;
+  AlltoallWorkData* data;
+  data = new AlltoallWorkData(size_);
+
+  /* to avoid flatten the tensors, we use alltoallv to achieve Alltoall as
+     follow.
+      1. store addresses of each tensor directly in displacements, keep buffer
+     to nullptr, i.e., 0
+      2. convert datatype to UINT8, which is always 1 bytes, to avoid wrong size
+     calculation in UCC layer
+      3. post Alltoallv
+  */
+  for (const auto i : c10::irange(size_)) {
+    data->send_lengths[i] =
+        (uint64_t)(inputTensors[i].element_size() * inputTensors[i].numel());
+    data->send_offsets[i] = (uint64_t)inputTensors[i].data_ptr();
+    data->recv_lengths[i] =
+        (uint64_t)(outputTensors[i].element_size() * outputTensors[i].numel());
+    data->recv_offsets[i] = (uint64_t)outputTensors[i].data_ptr();
+  }
+
+  coll.mask = UCC_COLL_ARGS_FIELD_FLAGS;
+  coll.flags =
+      UCC_COLL_ARGS_FLAG_COUNT_64BIT | UCC_COLL_ARGS_FLAG_DISPLACEMENTS_64BIT;
+  coll.coll_type = UCC_COLL_TYPE_ALLTOALLV;
+  coll.src.info_v.buffer = 0;
+  coll.src.info_v.counts = (ucc_count_t*)data->send_lengths.data();
+  coll.src.info_v.displacements = (ucc_aint_t*)data->send_offsets.data();
+  coll.src.info_v.datatype = UCC_DT_UINT8;
+  coll.src.info_v.mem_type = to_ucc_memType(inputTensors[0].device().type());
+  coll.dst.info_v.buffer = 0;
+  coll.dst.info_v.counts = (ucc_count_t*)data->recv_lengths.data();
+  coll.dst.info_v.displacements = (ucc_aint_t*)data->recv_offsets.data();
+  coll.dst.info_v.datatype = UCC_DT_UINT8;
+  coll.dst.info_v.mem_type = to_ucc_memType(outputTensors[0].device().type());
+
+  SAVE_TENSORS(inputTensors, data->src);
+  SAVE_TENSORS(outputTensors, data->dst);
+
+  return collective_post(
+      OpType::ALLTOALL,
+      []() {},
+      []() {},
+      coll,
+      std::unique_ptr<WorkData>(data),
+      device,
+      outputTensors,
+      "ucc:alltoall");
 }
 
 c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::alltoall_base(
@@ -980,7 +1044,9 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::alltoall_base(
     coll.dst.info_v.datatype = ucc_dtype_map.at(outputTensor.scalar_type());
     coll.dst.info_v.mem_type = to_ucc_memType(outputTensor.device().type());
     coll.flags = UCC_COLL_ARGS_FLAG_CONTIG_SRC_BUFFER |
-        UCC_COLL_ARGS_FLAG_CONTIG_DST_BUFFER;
+        UCC_COLL_ARGS_FLAG_CONTIG_DST_BUFFER |
+        UCC_COLL_ARGS_FLAG_COUNT_64BIT |
+        UCC_COLL_ARGS_FLAG_DISPLACEMENTS_64BIT;
   }
   std::vector<at::Tensor> inputTensors = {inputTensor};
   std::vector<at::Tensor> outputTensors = {outputTensor};
