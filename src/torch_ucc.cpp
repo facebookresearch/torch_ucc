@@ -50,7 +50,20 @@ const std::map<at::ScalarType, ucc_datatype_t> ucc_dtype_map = {
     {at::kFloat, UCC_DT_FLOAT32},
     {at::kInt, UCC_DT_INT32},
     {at::kLong, UCC_DT_INT64},
+    {at::kBool, UCC_DT_UINT8},
 };
+
+ucc_datatype_t to_ucc_dType(at::Tensor _tensor) {
+  if (_tensor.scalar_type() == at::kBool && _tensor.element_size() != 1) {
+    TORCH_CHECK(
+        false, "Size of Boolean type larger than 1 is not supported in UCC");
+  }
+  try {
+    return ucc_dtype_map.at(_tensor.scalar_type());
+  } catch (const std::out_of_range& e) {
+    TORCH_CHECK(false, "Not supported data type for UCC");
+  }
+}
 
 const std::map<ReduceOp, ucc_reduction_op_t> ucc_op_map = {
     {ReduceOp::SUM, UCC_OP_SUM},
@@ -64,6 +77,34 @@ const std::map<ReduceOp, ucc_reduction_op_t> ucc_op_map = {
     {ReduceOp::AVG, UCC_OP_AVG},
 #endif
 };
+
+ucc_reduction_op_t to_ucc_reduceOp(
+    const ReduceOp _op,
+    const at::ScalarType _dt) {
+  if (_dt == at::kBool) {
+    if (_op == ReduceOp::SUM) {
+      // bitwise or
+      return UCC_OP_MAX;
+    } else if (_op == ReduceOp::PRODUCT) {
+      // bitwise and
+      return UCC_OP_MIN;
+    }
+#if TORCH_VERSION_MAJOR > 1 || \
+    (TORCH_VERSION_MAJOR == 1 && TORCH_VERSION_MINOR >= 11)
+    else if (_op == ReduceOp::AVG) {
+      TORCH_CHECK(
+          false, "Cannot use ReduceOp.AVG with boolean inputs");
+    }
+#endif
+  }
+
+  try {
+    return ucc_op_map.at(_op);
+  } catch (const std::out_of_range& e) {
+    TORCH_CHECK(
+        false, "Not supported ReduceOp for UCC");
+  }
+}
 
 struct torch_ucc_config_t {
   std::once_flag flag;
@@ -821,11 +862,11 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::allgather(
     coll.coll_type = UCC_COLL_TYPE_ALLGATHER;
     coll.src.info.buffer = tensor.data_ptr();
     coll.src.info.count = tensor.numel();
-    coll.src.info.datatype = ucc_dtype_map.at(tensor.scalar_type());
+    coll.src.info.datatype = to_ucc_dType(tensor);
     coll.src.info.mem_type = to_ucc_memType(tensor.device().type());
     coll.dst.info.buffer = flat_output[0].data_ptr();
     coll.dst.info.count = flat_output[0].numel();
-    coll.dst.info.datatype = ucc_dtype_map.at(flat_output[0].scalar_type());
+    coll.dst.info.datatype = to_ucc_dType(flat_output[0]);
     coll.dst.info.mem_type =
         to_ucc_memType(outputTensors[0][0].device().type());
 
@@ -887,14 +928,14 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::allreduce(
   coll.mask = UCC_COLL_ARGS_FIELD_FLAGS;
   coll.flags = UCC_COLL_ARGS_FLAG_IN_PLACE;
   coll.coll_type = UCC_COLL_TYPE_ALLREDUCE;
-  coll.op = ucc_op_map.at(opts.reduceOp);
+  coll.op = to_ucc_reduceOp(opts.reduceOp, tensor.scalar_type());
   coll.src.info.buffer = nullptr;
   coll.src.info.count = tensor.numel();
-  coll.src.info.datatype = ucc_dtype_map.at(tensor.scalar_type());
+  coll.src.info.datatype = to_ucc_dType(tensor);
   coll.src.info.mem_type = to_ucc_memType(tensor.device().type());
   coll.dst.info.buffer = tensor.data_ptr();
   coll.dst.info.count = tensor.numel();
-  coll.dst.info.datatype = ucc_dtype_map.at(tensor.scalar_type());
+  coll.dst.info.datatype = to_ucc_dType(tensor);
   coll.dst.info.mem_type = to_ucc_memType(tensor.device().type());
   SAVE_TENSORS(tensors, data->dst);
   return collective_post(
@@ -972,12 +1013,12 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::alltoall_base(
     coll.src.info_v.buffer = inputTensor.data_ptr();
     coll.src.info_v.counts = (ucc_count_t*)data->send_lengths.data();
     coll.src.info_v.displacements = (ucc_aint_t*)data->send_offsets.data();
-    coll.src.info_v.datatype = ucc_dtype_map.at(inputTensor.scalar_type());
+    coll.src.info_v.datatype = to_ucc_dType(inputTensor);
     coll.src.info_v.mem_type = to_ucc_memType(inputTensor.device().type());
     coll.dst.info_v.buffer = outputTensor.data_ptr();
     coll.dst.info_v.counts = (ucc_count_t*)data->recv_lengths.data();
     coll.dst.info_v.displacements = (ucc_aint_t*)data->recv_offsets.data();
-    coll.dst.info_v.datatype = ucc_dtype_map.at(outputTensor.scalar_type());
+    coll.dst.info_v.datatype = to_ucc_dType(outputTensor);
     coll.dst.info_v.mem_type = to_ucc_memType(outputTensor.device().type());
     coll.flags = UCC_COLL_ARGS_FLAG_CONTIG_SRC_BUFFER |
         UCC_COLL_ARGS_FLAG_CONTIG_DST_BUFFER;
@@ -1069,7 +1110,7 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::broadcast(
   coll.coll_type = UCC_COLL_TYPE_BCAST;
   coll.src.info.buffer = tensor.data_ptr();
   coll.src.info.count = tensor.numel();
-  coll.src.info.datatype = ucc_dtype_map.at(tensor.scalar_type());
+  coll.src.info.datatype = to_ucc_dType(tensor);
   coll.src.info.mem_type = to_ucc_memType(tensor.device().type());
   coll.root = opts.rootRank;
   SAVE_TENSORS(tensors, data->dst);
@@ -1121,15 +1162,15 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::reduce_scatter(
   coll.mask = 0;
   coll.flags = 0;
   coll.coll_type = UCC_COLL_TYPE_REDUCE_SCATTER;
-	coll.op = ucc_op_map.at(opts.reduceOp);
+	coll.op = to_ucc_reduceOp(opts.reduceOp, flat_input[0].scalar_type());
 
   coll.src.info.buffer = flat_input[0].data_ptr();
   coll.src.info.count = flat_input[0].numel();
-  coll.src.info.datatype = ucc_dtype_map.at(flat_input[0].scalar_type());
+  coll.src.info.datatype = to_ucc_dType(flat_input[0]);
   coll.src.info.mem_type = to_ucc_memType(flat_input[0].device().type());
   coll.dst.info.buffer = outputTensors[0].data_ptr();
   coll.dst.info.count = outputTensors[0].numel();
-  coll.dst.info.datatype = ucc_dtype_map.at(outputTensors[0].scalar_type());
+  coll.dst.info.datatype = to_ucc_dType(outputTensors[0]);
   coll.dst.info.mem_type = to_ucc_memType(outputTensors[0].device().type());
 
   SAVE_TENSORS(inputTensors[0], data->src);
