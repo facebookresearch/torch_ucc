@@ -58,6 +58,8 @@ jobs:
           /bin/bash ./test/start_test.sh ./test/torch_allreduce_test.py --backend=gloo
           echo "UCC broadcast"
           /bin/bash ./test/start_test.sh ./test/torch_bcast_test.py --backend=gloo
+          echo "UCC reduce"
+          /bin/bash ./test/start_test.sh ./test/torch_reduce_test.py --backend=gloo
         done
         echo "UCC basic functionality test"
         /bin/bash ./test/start_test.sh ./test/torch_work_test.py --backend=gloo
@@ -75,6 +77,8 @@ jobs:
         git clone ${PARAM_LINK} /tmp/param
         export LD_LIBRARY_PATH=/opt/ucx/lib:/opt/ucc/lib:$LD_LIBRARY_PATH
         export TORCH_UCC_TEST_SIZE=4
+        echo "PARAM-Comms Reduce w/ UCC"
+        /bin/bash ./test/start_test.sh /tmp/param/train/comms/pt/comms.py --backend ucc --device cpu --b 4 --e 4M --c 1 --collective reduce
         echo "PARAM-Comms Allreduce w/ UCC"
         /bin/bash ./test/start_test.sh /tmp/param/train/comms/pt/comms.py --backend ucc --device cpu --b 4 --e 4M --c 1 --collective all_reduce
         echo "PARAM-Comms Alltoall w/ UCC"
