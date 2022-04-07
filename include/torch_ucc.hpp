@@ -123,10 +123,10 @@ class ProcessGroupUCC : public ProcessGroup {
           send_offsets(size),
           recv_lengths(size),
           recv_offsets(size) {}
-    std::vector<uint32_t> send_lengths;
-    std::vector<uint32_t> send_offsets;
-    std::vector<uint32_t> recv_lengths;
-    std::vector<uint32_t> recv_offsets;
+    std::vector<uint64_t> send_lengths;
+    std::vector<uint64_t> send_offsets;
+    std::vector<uint64_t> recv_lengths;
+    std::vector<uint64_t> recv_offsets;
   };
 
   class AllgathervWorkData : public WorkData {
