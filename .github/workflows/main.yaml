@@ -77,6 +77,7 @@ jobs:
         export LD_LIBRARY_PATH=/opt/ucx/lib:/opt/ucc/lib:$LD_LIBRARY_PATH
         /opt/ucx/bin/ucx_info -e -u t
         export UCX_LOG_LEVEL=info
+        pip3 install expecttest hypothesis
         cd test
         for np in `seq 4`
         do
