@@ -72,6 +72,19 @@ jobs:
         echo "UCC multiple comms test shared comm"
         TORCH_UCC_SHARED_COMM=1 /bin/bash ./test/start_test.sh ./test/torch_multiple_comms_test.py
 
+    - name: PyTorch Unit Tests
+      run: |
+        export LD_LIBRARY_PATH=/opt/ucx/lib:/opt/ucc/lib:$LD_LIBRARY_PATH
+        /opt/ucx/bin/ucx_info -e -u t
+        export UCX_LOG_LEVEL=info
+        cd test
+        for np in `seq 4`
+        do
+          BACKEND='ucc'
+          WORLD_SIZE=$np
+          python torch_tests.py --subprocess
+        done
+
     - name: Test PARAM
       run: |
         git clone ${PARAM_LINK} /tmp/param
