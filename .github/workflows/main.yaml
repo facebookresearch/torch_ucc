@@ -81,8 +81,8 @@ jobs:
         cd test
         for np in `seq 4`
         do
-          BACKEND='ucc'
-          WORLD_SIZE=$np
+          export BACKEND='ucc'
+          export WORLD_SIZE=$np
           python torch_tests.py --subprocess
         done
 
