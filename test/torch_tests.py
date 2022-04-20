@@ -110,6 +110,12 @@ class TestDistBackendWithSpawn(TestDistBackend, DistributedTest._DistTestBase):
     @sandcastle_skip_if(
         BACKEND == "ucc", "This test fails on UCC, so we are not running it today"
     )
+    def test_gather_group(self):
+        raise Exception("This test fails with UCC, not running it")
+
+    @sandcastle_skip_if(
+        BACKEND == "ucc", "This test fails on UCC, so we are not running it today"
+    )
     def test_gather_full_group(self):
         raise Exception("This test fails with UCC, not running it")
 
@@ -141,6 +147,12 @@ class TestDistBackendWithSpawn(TestDistBackend, DistributedTest._DistTestBase):
         BACKEND == "ucc", "This test fails on UCC, so we are not running it today"
     )
     def test_scatter(self):
+        raise Exception("This test fails with UCC, not running it")
+
+    @sandcastle_skip_if(
+        BACKEND == "ucc", "This test fails on UCC, so we are not running it today"
+    )
+    def test_scatter_group(self):
         raise Exception("This test fails with UCC, not running it")
 
     @sandcastle_skip_if(
