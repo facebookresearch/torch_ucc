@@ -65,23 +65,11 @@ class TestDistBackendWithSpawn(TestDistBackend, DistributedTest._DistTestBase):
         self._spawn_processes()
         torch.backends.cudnn.flags(allow_tf32=False).__enter__()
 
-    # @sandcastle_skip_if(
-    #     BACKEND == "ucc", "This test fails on UCC, so we are not running it today"
-    # )
-    # def test_isend_autograd_profiler(self):
-    #     raise Exception("This test fails with UCC, not running it")
-
-    # @sandcastle_skip_if(
-    #     BACKEND == "ucc", "This test fails on UCC, so we are not running it today"
-    # )
-    # def test_all_gather_object_subgroup(self):
-    #     raise Exception("This test fails with UCC, not running it")
-
-    # @sandcastle_skip_if(
-    #     BACKEND == "ucc", "This test fails on UCC, so we are not running it today"
-    # )
-    # def test_ddp_logging_data_cpu(self):
-    #     raise Exception("This test fails with UCC, not running it")
+    @sandcastle_skip_if(
+        BACKEND == "ucc", "This test fails on UCC, so we are not running it today"
+    )
+    def test_ddp_logging_data_cpu(self):
+        raise Exception("This test fails with UCC, not running it")
 
     @sandcastle_skip_if(
         BACKEND == "ucc", "This test fails on UCC, so we are not running it today"
