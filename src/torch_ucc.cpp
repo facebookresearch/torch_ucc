@@ -135,9 +135,9 @@ void check_tensor(const std::vector<at::Tensor>& tensors) {
   if (tensors.size() != 1) {
     throw std::runtime_error("ProcessGroupUCC takes 1 tensor");
   }
-  if (!tensors[0].is_contiguous()) {
+  if (!tensors[0].is_non_overlapping_and_dense()) {
     throw std::runtime_error(
-        "ProcessGroupUCC input tensor has to be contiguous");
+        "ProcessGroupUCC input tensor has to be dense and non-overlapping");
   }
   if (tensors[0].is_sparse()) {
     throw std::runtime_error("ProcessGroupUCC input tensor has to be dense");
