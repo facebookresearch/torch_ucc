@@ -73,11 +73,6 @@ class TestDistBackendWithSpawn(TestDistBackend, DistributedTest._DistTestBase):
         self._spawn_processes()
         torch.backends.cudnn.flags(allow_tf32=False).__enter__()
 
-    # UCC does not support File Store today. Need to always use TCP Store.
-    @property
-    def init_method(self):
-        return "tcp://localhost:" + self.port_num
-
     @sandcastle_skip_if(
         BACKEND == "ucc", "This test fails on UCC, so we are not running it today"
     )
