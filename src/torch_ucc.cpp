@@ -1324,16 +1324,33 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::send(
   check_tensor(tensors);
   auto& tensor = tensors[0];
   initComm(tensor.device());
+  WorkData* data = new WorkData();
 
-  ucp_tag_t ucp_tag;
-  TORCH_UCX_MAKE_SEND_TAG(ucp_tag, tag, rank_, comm_id);
-  ucc_coll_req_h request = comm->send_nb(
-      eps[dstRank],
-      tensor.data_ptr(),
-      to_ucs_memType(tensor.device().type()),
-      tensor.numel() * tensor.element_size(),
-      ucp_tag);
-  return comm->enqueue_p2p(OpType::SEND, request, "ucc:send");
+  ucc_coll_args_t coll;
+  coll.mask = UCC_COLL_ARGS_FIELD_FLAGS | UCC_COLL_ARGS_FIELD_TAG;
+  coll.flags = UCC_COLL_ARGS_FLAG_IN_PLACE;
+  coll.coll_type = UCC_COLL_TYPE_SEND;
+  coll.root = dstRank;
+
+  // Note that because NCCL does not support tag matching, UCC will ignore this
+  // tag when using the NCCL TL. The UCP TL does have support for tagged
+  // messages so it will honor this tag.
+  coll.tag = tag;
+
+  coll.src.info.buffer = coll.dst.info.buffer = tensor.data_ptr();
+  coll.src.info.count = coll.dst.info.count = tensor.numel();
+  coll.src.info.datatype = coll.dst.info.datatype = ucc_dtype_map.at(tensor.scalar_type());
+  coll.src.info.mem_type = coll.dst.info.mem_type = to_ucc_memType(tensor.device().type());
+  SAVE_TENSORS(tensors, data->dst);
+  return collective_post(
+      OpType::SEND,
+      []() {},
+      []() {},
+      coll,
+      std::unique_ptr<WorkData>(data),
+      tensor.device(),
+      tensors,
+      "ucc:send");
 }
 
 c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::recv(
@@ -1343,35 +1360,41 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::recv(
   check_tensor(tensors);
   auto& tensor = tensors[0];
   initComm(tensor.device());
+  WorkData* data = new WorkData();
 
-  ucp_tag_t ucp_tag, ucp_tag_mask;
-  TORCH_UCX_MAKE_RECV_TAG(ucp_tag, ucp_tag_mask, tag, srcRank, comm_id);
-  ucc_coll_req_h request = comm->recv_nb(
-      tensor.data_ptr(),
-      to_ucs_memType(tensor.device().type()),
-      tensor.numel() * tensor.element_size(),
-      ucp_tag,
-      ucp_tag_mask);
-  return comm->enqueue_p2p(OpType::RECV, request, "ucc:recv");
+  ucc_coll_args_t coll;
+  coll.mask = UCC_COLL_ARGS_FIELD_FLAGS | UCC_COLL_ARGS_FIELD_TAG;
+  coll.flags = UCC_COLL_ARGS_FLAG_IN_PLACE;
+  coll.coll_type = UCC_COLL_TYPE_RECV;
+  coll.root = srcRank;
+
+  // Note that because NCCL does not support tag matching, UCC will ignore this
+  // tag when using the NCCL TL. The UCP TL does have support for tagged
+  // messages so it will honor this tag.
+  coll.tag = tag;
+
+  coll.src.info.buffer = coll.dst.info.buffer = tensor.data_ptr();
+  coll.src.info.count = coll.dst.info.count = tensor.numel();
+  coll.src.info.datatype = coll.dst.info.datatype = ucc_dtype_map.at(tensor.scalar_type());
+  coll.src.info.mem_type = coll.dst.info.mem_type = to_ucc_memType(tensor.device().type());
+  SAVE_TENSORS(tensors, data->dst);
+  return collective_post(
+      OpType::RECV,
+      []() {},
+      []() {},
+      coll,
+      std::unique_ptr<WorkData>(data),
+      tensor.device(),
+      tensors,
+      "ucc:recv");
 }
 
 c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::recvAnysource(
     std::vector<at::Tensor>& tensors,
     int tag) {
-  check_tensor(tensors);
-  auto& tensor = tensors[0];
-  initComm(tensor.device());
-
-  ucp_tag_t ucp_tag, ucp_tag_mask;
-  TORCH_UCX_MAKE_RECV_TAG(
-      ucp_tag, ucp_tag_mask, tag, TORCH_UCX_ANY_SOURCE, comm_id);
-  ucc_coll_req_h request = comm->recv_nb(
-      tensor.data_ptr(),
-      to_ucs_memType(tensor.device().type()),
-      tensor.numel() * tensor.element_size(),
-      ucp_tag,
-      ucp_tag_mask);
-  return comm->enqueue_p2p(OpType::RECVANYSOURCE, request, "ucc:recv");
+  TORCH_UCC_LOG_ERROR(TORCH_UCC_COLL_POST,
+                      "recvAnysource is not supported by PG-UCC");
+  throw std::runtime_error(ucc_status_string(UCC_ERR_NOT_SUPPORTED));
 }
 
 c10::intrusive_ptr<ProcessGroup> ProcessGroupUCC::createProcessGroupUCC(
