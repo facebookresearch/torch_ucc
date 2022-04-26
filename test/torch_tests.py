@@ -17,18 +17,18 @@ from torch.testing._internal.common_utils import (
 )
 
 # Sets showing that a collective isn't implemented
-DistTestCases.skip_collective["allgather_coalesced"] = {"nccl", "mpi", "ucc"}
-DistTestCases.skip_collective["gather"] = {"nccl", "ucc"}
-DistTestCases.skip_collective["scatter"] = {"nccl", "ucc"}
+DistTestCases.skip_collective["allgather_coalesced"] = {"ucc"}
+DistTestCases.skip_collective["gather"] = {"ucc"}
+DistTestCases.skip_collective["scatter"] = {"ucc"}
 DistTestCases.skip_collective["reduce"] = {"ucc"}
-DistTestCases.skip_collective["sendrecv anysource"] = {"nccl", "ucc"}
-DistTestCases.skip_collective["cpu barrier"] = {"nccl", "ucc"}
+DistTestCases.skip_collective["sendrecv anysource"] = {"ucc"}
+DistTestCases.skip_collective["cpu barrier"] = {"ucc"}
 
 # Sets showing that something is implemented
-DistTestCases.backend_feature["gpu"] = {"nccl", "gloo", "ucc"}
-DistTestCases.backend_feature["cuda"] = {"nccl", "gloo", "ucc"}
-DistTestCases.backend_feature["ddp"] = {"nccl", "gloo", "ucc"}
-DistTestCases.backend_feature["subgroup"] = {"nccl", "gloo", "ucc"}
+DistTestCases.backend_feature["gpu"] = {"ucc"}
+DistTestCases.backend_feature["cuda"] = {"ucc"}
+DistTestCases.backend_feature["ddp"] = {"ucc"}
+DistTestCases.backend_feature["subgroup"] = {"ucc"}
 DistTestCases.backend_feature["plugin"] = {"ucc"}
 
 os.environ["MASTER_ADDR"] = "localhost"
