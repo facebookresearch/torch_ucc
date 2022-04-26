@@ -12,6 +12,7 @@ import sys
 from setuptools import setup
 import torch
 from torch.utils import cpp_extension
+from hipify import torch_ucc_hipify
 
 ucc_plugin_dir = os.path.dirname(os.path.abspath(__file__))
 ucx_home = os.environ.get("UCX_HOME")
@@ -59,27 +60,6 @@ if '--oss' in sys.argv:
   plugin_sources += ["src/torch_ucc_init_oss.cpp"]
 else:
   plugin_sources += ["src/torch_ucc_init.cpp"]
-
-CUDA_TO_HIP_MAPPINGS = [
-  ('UCS_MEMORY_TYPE_CUDA', 'UCS_MEMORY_TYPE_ROCM'),
-  ('UCC_MEMORY_TYPE_CUDA', 'UCC_MEMORY_TYPE_ROCM')
-]
-
-# Overwrite each source file for hipification
-def torch_ucc_hipify(src_path_list):
-  for src_path in src_path_list:
-    print("Torch-UCC hipification applied to " + src_path)
-    with open(src_path, 'rt', encoding='utf-8') as fin:
-      fin.seek(0)
-      source = fin.read()
-      for k, v in CUDA_TO_HIP_MAPPINGS:
-        source = source.replace(k, v)
-      fin.close()
-
-    with open(src_path, 'wt', encoding='utf-8') as fout:
-      fout.write(source)
-      fout.close()
-
 
 with_cuda = os.environ.get("WITH_CUDA")
 if with_cuda is None or with_cuda == "no":
