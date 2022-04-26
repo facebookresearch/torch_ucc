@@ -1390,10 +1390,80 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::reduce_scatter(
 }
 
 c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::scatter(
-    std::vector<at::Tensor>& /* unused */,
-    std::vector<std::vector<at::Tensor>>& /* unused */,
-    const ScatterOptions& /* unused */) {
-  throw std::runtime_error("ProcessGroupUCC does not support scatter");
+    std::vector<at::Tensor>& outputTensors,
+    std::vector<std::vector<at::Tensor>>& inputTensors,
+    const ScatterOptions& opts) {
+  if (size_ == 1) {
+    outputTensors[0].copy_(inputTensors[0][0]);
+    return c10::make_intrusive<ProcessGroupUCC::WorkUCC>(
+        OpType::SCATTER,
+        torch_ucc_config.enable_profiling ? "ucc:scatter" : nullptr);
+  }
+  auto& tensor = outputTensors[0];
+  initComm(tensor.device());
+
+  ScattervWorkData* data = new ScattervWorkData(size_);
+  ucc_coll_args_t coll;
+  coll.root = opts.rootRank;
+  coll.mask = UCC_COLL_ARGS_FIELD_FLAGS;
+  coll.flags =
+      UCC_COLL_ARGS_FLAG_COUNT_64BIT | UCC_COLL_ARGS_FLAG_DISPLACEMENTS_64BIT;
+  coll.coll_type = UCC_COLL_TYPE_SCATTERV;
+
+  if (getRank() == opts.rootRank) {
+    /* src is only valid at non-root rank */
+    if (inputTensors.size() != 1) {
+      TORCH_UCC_LOG_ERROR(
+          TORCH_UCC_COLL_POST,
+          c10::str(
+              "gather requires a single-element output list containing a list with ",
+              getSize(),
+              " tensors."));
+    } else if (inputTensors[0].size() != static_cast<size_t>(getSize())) {
+      TORCH_UCC_LOG_ERROR(TORCH_UCC_COLL_POST,
+        c10::str(
+          "Incorrect output list size ", inputTensors[0].size(),
+          ". Output list size should be ", getSize(),
+          ", same as size of the process group."));
+    }
+
+    for (int i = 0; i < size_; i++) {
+      data->send_lengths[i] = (uint64_t) tensor.element_size() * tensor.numel();
+      data->send_offsets[i] = (uint64_t)inputTensors[0][i].data_ptr();
+    }
+    /* use scatter and store non-contiguous addresses in displacements to avoid
+     * flatten inputTensors */
+    coll.src.info_v.buffer = nullptr;
+    coll.src.info_v.counts = (ucc_count_t*)data->send_lengths.data();
+    coll.src.info_v.displacements = (ucc_aint_t*)data->send_offsets.data();
+    coll.src.info_v.datatype = UCC_DT_UINT8;
+    coll.src.info_v.mem_type =
+        to_ucc_memType(inputTensors[0][0].device().type());
+
+    SAVE_TENSORS(inputTensors[0], data->src);
+  } else {
+    // for non-root ranks, inputTensors should be an empty list
+    if (inputTensors.size() != 0) {
+      TORCH_UCC_LOG_ERROR(
+          TORCH_UCC_COLL_POST, "requires empty output on non-root");
+    }
+  }
+
+  coll.dst.info.buffer = tensor.data_ptr();
+  coll.dst.info.count = (uint64_t) tensor.element_size() * tensor.numel();
+  coll.dst.info.datatype = UCC_DT_UINT8;
+  coll.dst.info.mem_type = to_ucc_memType(tensor.device().type());
+  SAVE_TENSORS(outputTensors, data->dst);
+
+  return collective_post(
+      OpType::SCATTER,
+      []() {},
+      []() {},
+      coll,
+      std::unique_ptr<WorkData>(data),
+      tensor.device(),
+      outputTensors,
+      "ucc:scatter");
 }
 
 c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::send(
