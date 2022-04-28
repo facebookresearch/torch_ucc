@@ -19,9 +19,9 @@ from torch.testing._internal.common_utils import (
 # Sets showing that a collective isn't implemented
 DistTestCases.skip_collective["allgather_coalesced"] = {"ucc"}
 DistTestCases.skip_collective["gather"] = {"ucc"}
-DistTestCases.skip_collective["scatter"] = {"ucc"}
+# DistTestCases.skip_collective["scatter"] = {"ucc"}
 DistTestCases.skip_collective["reduce"] = {"ucc"}
-DistTestCases.skip_collective["sendrecv anysource"] = {"ucc"}
+# DistTestCases.skip_collective["sendrecv anysource"] = {"ucc"}
 DistTestCases.skip_collective["cpu barrier"] = {"ucc"}
 
 # Sets showing that something is implemented
@@ -143,27 +143,27 @@ class TestDistBackendWithSpawn(TestDistBackend, DistributedTest._DistTestBase):
     def test_get_rank_size_group(self):
         raise Exception("This test fails with UCC, not running it")
 
-    @sandcastle_skip_if(
-        BACKEND == "ucc", "This test fails on UCC, so we are not running it today"
-    )
+#     @sandcastle_skip_if(
+#         BACKEND == "ucc", "This test fails on UCC, so we are not running it today"
+#     )
     def test_scatter(self):
         raise Exception("This test fails with UCC, not running it")
 
-    @sandcastle_skip_if(
-        BACKEND == "ucc", "This test fails on UCC, so we are not running it today"
-    )
+#     @sandcastle_skip_if(
+#         BACKEND == "ucc", "This test fails on UCC, so we are not running it today"
+#     )
     def test_scatter_group(self):
         raise Exception("This test fails with UCC, not running it")
 
-    @sandcastle_skip_if(
-        BACKEND == "ucc", "This test fails on UCC, so we are not running it today"
-    )
+#     @sandcastle_skip_if(
+#         BACKEND == "ucc", "This test fails on UCC, so we are not running it today"
+#     )
     def test_scatter_checks(self):
         raise Exception("This test fails with UCC, not running it")
 
-    @sandcastle_skip_if(
-        BACKEND == "ucc", "This test fails on UCC, so we are not running it today"
-    )
+#     @sandcastle_skip_if(
+#         BACKEND == "ucc", "This test fails on UCC, so we are not running it today"
+#     )
     def test_scatter_complex(self):
         raise Exception("This test fails with UCC, not running it")
 
