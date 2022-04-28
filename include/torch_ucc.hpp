@@ -138,6 +138,15 @@ class ProcessGroupUCC : public ProcessGroup {
     std::vector<uint64_t> recv_offsets;
   };
 
+  class ScattervWorkData : public WorkData {
+   public:
+    ScattervWorkData(int size)
+      : send_lengths(size),
+        send_offsets(size) {}
+    std::vector<uint64_t> send_lengths;
+    std::vector<uint64_t> send_offsets;
+  };
+
   class ProgressEntry {
     friend class ProcessGroupUCC;
     friend class CommPG;
