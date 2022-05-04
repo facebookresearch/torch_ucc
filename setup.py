@@ -74,6 +74,7 @@ if with_cuda is None or with_cuda == "no":
     )
 else:
     print("CUDA support is enabled")
+    plugin_libraries.append("cuda")
     plugin_compile_args.append("-DUSE_CUDA")
     module = cpp_extension.CUDAExtension(
         name = "torch_ucc",
