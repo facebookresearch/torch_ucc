@@ -42,7 +42,7 @@ jobs:
         export LD_LIBRARY_PATH=/opt/ucx/lib:/opt/ucc/lib:$LD_LIBRARY_PATH
         /opt/ucx/bin/ucx_info -e -u t
         export UCX_LOG_LEVEL=info
-        export TORCH_UCC_ENABLE_HEALTH_CHECK=1
+        # export TORCH_UCC_ENABLE_HEALTH_CHECK=1
         export TORCH_SHOW_CPP_STACKTRACES=1
         for np in `seq 4`
         do
@@ -79,7 +79,7 @@ jobs:
         export LD_LIBRARY_PATH=/opt/ucx/lib:/opt/ucc/lib:$LD_LIBRARY_PATH
         /opt/ucx/bin/ucx_info -e -u t
         export UCX_LOG_LEVEL=info
-        export TORCH_UCC_ENABLE_HEALTH_CHECK=1
+        # export TORCH_UCC_ENABLE_HEALTH_CHECK=1
         export TORCH_SHOW_CPP_STACKTRACES=1
         pip3 install expecttest hypothesis
         cd test
