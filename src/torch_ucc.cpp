@@ -284,7 +284,8 @@ void ProcessGroupUCC::ProgressEntry::finalize(std::exception_ptr eptr) {
 CommPG::CommPG(
     const c10::intrusive_ptr<ProcessGroupUCCLogger>& logger_,
     std::shared_ptr<torch_ucc_oob_coll_info_t> oob_,
-    c10::Device dev, bool is_health_check)
+    c10::Device dev,
+    bool is_health_check)
     : logger(logger_),
       oob(oob_),
       ucx_comm(oob->size, logger),
@@ -803,8 +804,7 @@ void ProcessGroupUCC::runHealthCheck() {
   if (healthCheckData.healthCheckException) {
     std::rethrow_exception(healthCheckData.healthCheckException);
   }
-  // If there is no exception, the likely culprit is a timeout/hang which is how
-  // most communicator init issues manifest themselves.
+  // If there is no exception, the likely culprit is a timeout/hang
   TORCH_CHECK(
       healthCheckData.ucxHealthCheckSuccess,
       "ProcessGroupUCC: Health check failure: Failed to initialize UCX on rank ",
