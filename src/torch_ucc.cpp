@@ -753,7 +753,6 @@ void ProcessGroupUCC::runHealthCheck() {
   auto t = std::thread([&healthCheckData, this]() {
     try {
       auto oob = std::make_shared<torch_ucc_oob_coll_info_t>();
-      oob->prefix = "healthcheck/";
       oob->rank = this->oob->rank;
       oob->size = this->oob->size;
       oob->store = this->oob->store;

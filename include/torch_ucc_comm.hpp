@@ -129,7 +129,6 @@ class TORCH_API ProcessGroupUCCLogger : public torch::CustomClassHolder {
 };
 
 struct torch_ucc_oob_coll_info_t {
-  std::string prefix;
   c10::intrusive_ptr<Store> store;
   uint32_t comm_id;
   int rank;
@@ -137,7 +136,7 @@ struct torch_ucc_oob_coll_info_t {
   void* rbuf;
   size_t msglen;
   std::string getKey(std::string key) {
-    return prefix + std::to_string(comm_id) + key;
+    return std::to_string(comm_id) + key;
   }
 };
 
