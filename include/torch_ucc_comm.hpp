@@ -95,6 +95,7 @@ namespace c10d {
 enum torch_ucc_phase_t {
   TORCH_UCC_UNKNOWN = -1,
   TORCH_UCC_INIT,
+  TORCH_UCC_HEALTH_CHECK,
   TORCH_UCC_READY,
   TORCH_UCC_COLL_POST,
   TORCH_UCC_COLL_PROGRESS,
@@ -104,6 +105,7 @@ enum torch_ucc_phase_t {
 const std::map<torch_ucc_phase_t, std::string> ucc_phase_map = {
     {TORCH_UCC_UNKNOWN, "UNKNOWN"},
     {TORCH_UCC_INIT, "INIT"},
+    {TORCH_UCC_HEALTH_CHECK, "HEALTH_CHECK"},
     {TORCH_UCC_READY, "READY"},
     {TORCH_UCC_COLL_POST, "COLL_POST"},
     {TORCH_UCC_COLL_PROGRESS, "COLL_PROGRESS"},
@@ -127,6 +129,7 @@ class TORCH_API ProcessGroupUCCLogger : public torch::CustomClassHolder {
 };
 
 struct torch_ucc_oob_coll_info_t {
+  std::string prefix;
   c10::intrusive_ptr<Store> store;
   uint32_t comm_id;
   int rank;
@@ -134,7 +137,7 @@ struct torch_ucc_oob_coll_info_t {
   void* rbuf;
   size_t msglen;
   std::string getKey(std::string key) {
-    return std::to_string(comm_id) + key;
+    return prefix + std::to_string(comm_id) + key;
   }
 };
 
