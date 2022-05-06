@@ -330,7 +330,6 @@ class CommPG {
   std::shared_ptr<torch_ucc_oob_coll_info_t> oob;
   CommUCX ucx_comm;
   CommUCC ucc_comm;
-  c10::DeviceIndex device_index;
   std::mutex mutex;
   std::thread progress_thread;
   std::condition_variable queue_produce_cv;
@@ -338,7 +337,6 @@ class CommPG {
   std::deque<std::shared_ptr<ProcessGroupUCC::ProgressEntry>> progress_queue;
   bool stop_progress_loop;
   bool collective_inprogress;
-  torch_ucc_phase_t start_phase;
   torch_ucc_phase_t finalize_phase;
 
  public:

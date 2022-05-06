@@ -290,7 +290,6 @@ CommPG::CommPG(
       oob(oob_),
       ucx_comm(oob->size, logger),
       ucc_comm(oob, logger),
-      start_phase(is_health_check ? TORCH_UCC_HEALTH_CHECK : TORCH_UCC_INIT),
       finalize_phase(is_health_check ? TORCH_UCC_HEALTH_CHECK : TORCH_UCC_FINALIZE),
       cuda_device_index(TORCH_UCC_DEVICE_NOT_SET) {
   if (dev.is_cuda()) {
