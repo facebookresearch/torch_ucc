@@ -751,8 +751,8 @@ void ProcessGroupUCC::runHealthCheck() {
     try {
       auto oob = std::make_shared<torch_ucc_oob_coll_info_t>();
       oob->prefix = "healthcheck/";
-      oob->rank = rank_;
-      oob->size = size_;
+      oob->rank = this->oob->rank;
+      oob->size = this->oob->size;
       oob->store = this->oob->store;
 
       std::vector<ucp_ep_h> eps;
@@ -761,7 +761,7 @@ void ProcessGroupUCC::runHealthCheck() {
 
       auto comm = CommPG::get_comm(comm_id, c10::kCPU, oob, logger, true);
       comm->ucx_connect_eps(eps, oob);
-      comm->ucx_disconnect_eps(eps, oob);
+      // comm->ucx_disconnect_eps(eps, oob);
       TORCH_UCC_LOG_INFO(TORCH_UCC_HEALTH_CHECK, "UCX library health check succeed.");
       // Mark ucx health check as complete.
       {
@@ -770,7 +770,7 @@ void ProcessGroupUCC::runHealthCheck() {
       }
 
       comm->ucc_create_team(team, oob);
-      comm->ucc_destroy_team(team);
+      // comm->ucc_destroy_team(team);
       TORCH_UCC_LOG_INFO(TORCH_UCC_HEALTH_CHECK, "UCC library health check succeed.");
       // Mark ucc health check as complete.
       {
