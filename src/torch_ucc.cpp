@@ -344,7 +344,6 @@ std::shared_ptr<CommPG> CommPG::get_comm(
   }
   remote_comm_id = oob->store->get("group_id" + std::to_string(0));
   oob->comm_id = *(reinterpret_cast<uint32_t*>(remote_comm_id.data()));
-  std::cout << "rank = " << oob->rank << ", comm_id = " << oob->comm_id << std::endl;
   comm_id = oob->comm_id + 1;
 
   if (torch_ucc_config.shared_comm) {
@@ -739,7 +738,6 @@ ProcessGroupUCC::~ProcessGroupUCC() {
 }
 
 void ProcessGroupUCC::runHealthCheck() {
-  std::cout << "rank = " << rank_ << ", runHealthCheck" << std::endl;
   // Run health check in a separate thread and wait on CV to handle timeouts.
   // This design allows us to handle hangs.
 
@@ -819,7 +817,6 @@ void ProcessGroupUCC::runHealthCheck() {
       healthCheckData.uccHealthCheckSuccess,
       "ProcessGroupUCC: Health check failure: Failed to initialize UCC on rank ",
       rank_);
-  std::cout << "rank = " << rank_ << ", done runHealthCheck" << std::endl;
 }
 
 void ProcessGroupUCC::set_timeout(ucc_coll_args_t& args) {
