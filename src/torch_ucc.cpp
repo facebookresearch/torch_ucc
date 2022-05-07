@@ -325,6 +325,7 @@ std::shared_ptr<CommPG> CommPG::get_comm(
   id = (comm_id % TORCH_UCX_MAX_COMM);
 
   std::vector<uint8_t> remote_comm_id;
+  oob->store->deleteKey("group_id" + std::to_string(0));
   if (oob->rank != 0) {
     std::vector<uint8_t> val = std::vector<uint8_t>(
         reinterpret_cast<uint8_t*>(&id),
@@ -333,6 +334,7 @@ std::shared_ptr<CommPG> CommPG::get_comm(
   } else {
     for (int i = 1; i < oob->size; i++) {
       remote_comm_id = oob->store->get("group_id" + std::to_string(i));
+      oob->store->deleteKey("group_id" + std::to_string(i));
       id = std::max(id, *(reinterpret_cast<uint32_t*>(remote_comm_id.data())));
     }
     std::vector<uint8_t> val = std::vector<uint8_t>(
@@ -342,6 +344,7 @@ std::shared_ptr<CommPG> CommPG::get_comm(
   }
   remote_comm_id = oob->store->get("group_id" + std::to_string(0));
   oob->comm_id = *(reinterpret_cast<uint32_t*>(remote_comm_id.data()));
+  std::cout << "rank = " << oob->rank << ", comm_id = " << oob->comm_id << std::endl;
   comm_id = oob->comm_id + 1;
 
   if (torch_ucc_config.shared_comm) {
@@ -736,6 +739,7 @@ ProcessGroupUCC::~ProcessGroupUCC() {
 }
 
 void ProcessGroupUCC::runHealthCheck() {
+  std::cout << "rank = " << rank_ << ", runHealthCheck" << std::endl;
   // Run health check in a separate thread and wait on CV to handle timeouts.
   // This design allows us to handle hangs.
 
@@ -760,6 +764,7 @@ void ProcessGroupUCC::runHealthCheck() {
       ucc_team_h team = nullptr;
       uint32_t comm_id;
 
+      // auto comm = std::make_unique<CommPG>(logger, oob, c10::kCPU, true);//comm_id, c10::kCPU, oob, logger, true);
       auto comm = CommPG::get_comm(comm_id, c10::kCPU, oob, logger, true);
       comm->ucx_connect_eps(eps, oob);
       comm->ucx_disconnect_eps(eps, oob);
@@ -814,6 +819,7 @@ void ProcessGroupUCC::runHealthCheck() {
       healthCheckData.uccHealthCheckSuccess,
       "ProcessGroupUCC: Health check failure: Failed to initialize UCC on rank ",
       rank_);
+  std::cout << "rank = " << rank_ << ", done runHealthCheck" << std::endl;
 }
 
 void ProcessGroupUCC::set_timeout(ucc_coll_args_t& args) {
