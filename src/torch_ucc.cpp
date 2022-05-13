@@ -1193,10 +1193,89 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::broadcast(
 }
 
 c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::gather(
-    std::vector<std::vector<at::Tensor>>& /* unused */,
-    std::vector<at::Tensor>& /* unused */,
-    const GatherOptions& /* unused */) {
-  throw std::runtime_error("ProcessGroupUCC does not support gather");
+    std::vector<std::vector<at::Tensor>>& outputTensors,
+    std::vector<at::Tensor>& inputTensors,
+    const GatherOptions& opts) {
+  if (size_ == 1) {
+    outputTensors[0][0].copy_(inputTensors[0]);
+    return c10::make_intrusive<ProcessGroupUCC::WorkUCC>(
+        OpType::GATHER,
+        torch_ucc_config.enable_profiling ? "ucc:gather" : nullptr);
+  }
+  std::vector<at::Tensor> outputs;
+  auto& input = inputTensors[0];
+  initComm(input.device());
+
+  AllgathervWorkData* data = new AllgathervWorkData(size_);
+  ucc_coll_args_t coll;
+  coll.root = opts.rootRank;
+  coll.mask = UCC_COLL_ARGS_FIELD_FLAGS;
+  coll.flags =
+      UCC_COLL_ARGS_FLAG_COUNT_64BIT | UCC_COLL_ARGS_FLAG_DISPLACEMENTS_64BIT;
+  coll.coll_type = UCC_COLL_TYPE_GATHERV;
+
+  /* for non-root ranks, only src is valid */
+  coll.src.info.buffer = input.data_ptr();
+  coll.src.info.count = (uint64_t)(input.element_size() * input.numel());
+  coll.src.info.datatype = UCC_DT_UINT8;
+  coll.src.info.mem_type = to_ucc_memType(input.device().type());
+
+  if (getRank() == opts.rootRank) {
+    if (outputTensors.size() != 1) {
+      TORCH_UCC_LOG_ERROR(
+          TORCH_UCC_COLL_POST,
+          c10::str(
+              "gather requires a single-element output list containing a list with ",
+              getSize(),
+              " tensors."));
+    } else if (outputTensors[0].size() != static_cast<size_t>(getSize())) {
+      TORCH_UCC_LOG_ERROR(
+          TORCH_UCC_COLL_POST,
+          c10::str(
+              "Incorrect output list size ",
+              outputTensors[0].size(),
+              ". Output list size should be ",
+              getSize(),
+              ", same as size of the process group."));
+    }
+    outputs = outputTensors[0];
+
+    for (int i = 0; i < size_; i++) {
+      data->recv_lengths[i] =
+          (uint64_t)(outputs[i].element_size() * outputs[i].numel());
+      data->recv_offsets[i] = (uint64_t)outputs[i].data_ptr();
+    }
+    /* use gatherv and store non-contiguous addresses in displacements to avoid
+     * flatten outputTensors */
+    coll.dst.info_v.buffer = nullptr;
+    coll.dst.info_v.counts = (ucc_count_t*)data->recv_lengths.data();
+    coll.dst.info_v.displacements = (ucc_aint_t*)data->recv_offsets.data();
+    coll.dst.info_v.datatype = UCC_DT_UINT8;
+    coll.dst.info_v.mem_type = to_ucc_memType(outputs[0].device().type());
+
+    SAVE_TENSORS(outputs, data->dst);
+  } else {
+    // for non-root ranks, outputTensors should be an empty list
+    if (outputTensors.size() != 0) {
+      TORCH_UCC_LOG_ERROR(
+          TORCH_UCC_COLL_POST, "requires empty output on non-root");
+    }
+    outputs = {};
+    // append a empty tensor to the list to be used by future mark
+    outputs.emplace_back();
+  }
+
+  SAVE_TENSORS(inputTensors, data->src);
+
+  return collective_post(
+      OpType::GATHER,
+      []() {},
+      []() {},
+      coll,
+      std::unique_ptr<WorkData>(data),
+      input.device(),
+      outputs,
+      "ucc:gather");
 }
 
 c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::reduce(
