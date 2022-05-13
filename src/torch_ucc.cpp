@@ -120,7 +120,9 @@ std::map<std::string, std::string> torch_ucc_envs_map = {
     {"TORCH_UCC_ALLREDUCE_BLOCKING_WAIT", "1"},
     {"TORCH_UCC_ALLTOALL_BLOCKING_WAIT", "1"},
     {"TORCH_UCC_BCAST_BLOCKING_WAIT", "1"},
+    {"TORCH_UCC_GATHER_BLOCKING_WAIT", "1"},
     {"TORCH_UCC_REDUCE_SCATTER_BLOCKING_WAIT", "1"},
+    {"TORCH_UCC_SCATTER_BLOCKING_WAIT", "1"},
     {"TORCH_UCC_USE_FUTURE", "1"},
     {"TORCH_UCC_PROFILING_ENABLE", "0"},
     {"TORCH_UCC_TLS", "nccl,ucp"},
@@ -156,6 +158,10 @@ void read_confg() {
       std::stoi(torch_ucc_envs_map.at("TORCH_UCC_BCAST_BLOCKING_WAIT"));
   torch_ucc_config.blocking_wait[(std::uint8_t)OpType::REDUCE_SCATTER] =
       std::stoi(torch_ucc_envs_map.at("TORCH_UCC_REDUCE_SCATTER_BLOCKING_WAIT"));
+  torch_ucc_config.blocking_wait[(std::uint8_t)OpType::SCATTER] =
+      std::stoi(torch_ucc_envs_map.at("TORCH_UCC_SCATTER_BLOCKING_WAIT"));
+  torch_ucc_config.blocking_wait[(std::uint8_t)OpType::GATHER] =
+      std::stoi(torch_ucc_envs_map.at("TORCH_UCC_GATHER_BLOCKING_WAIT"));
   torch_ucc_config.use_future =
       std::stoi(torch_ucc_envs_map.at("TORCH_UCC_USE_FUTURE"));
   torch_ucc_config.enable_profiling =
