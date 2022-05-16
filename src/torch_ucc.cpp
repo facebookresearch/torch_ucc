@@ -911,10 +911,46 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::allgather(
 }
 
 c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::_allgather_base(
-    at::Tensor& /* unused */,
-    at::Tensor& /* unused */,
-    const AllgatherOptions& /* unused */) {
-  throw std::runtime_error("ProcessGroupUCC does not support allgather_base");
+    at::Tensor& outputTensor,
+    at::Tensor& inputTensor,
+    const AllgatherOptions& opts) {
+  if (size_ == 1) {
+    outputTensor.copy_(inputTensor);
+    return c10::make_intrusive<ProcessGroupUCC::WorkUCC>(
+              OpType::_ALLGATHER_BASE,
+              torch_ucc_config.enable_profiling ? "ucc:allgather_base" : nullptr);
+  }
+  check_tensor({outputTensor});
+  check_tensor({inputTensor});
+  initComm(outputTensor.device());
+
+  WorkData* data = new WorkData();
+
+  ucc_coll_args_t coll;
+  coll.coll_type = UCC_COLL_TYPE_ALLGATHER;
+  coll.src.info.buffer = inputTensor.data_ptr();
+  coll.src.info.count = inputTensor.numel();
+  coll.src.info.datatype = ucc_dtype_map.at(inputTensor.scalar_type());
+  coll.src.info.mem_type = to_ucc_memType(inputTensor.device().type());
+  coll.dst.info.buffer = outputTensor.data_ptr();
+  coll.dst.info.count = outputTensor.numel();
+  coll.dst.info.datatype = ucc_dtype_map.at(outputTensor.scalar_type());
+  coll.dst.info.mem_type = to_ucc_memType(outputTensor.device().type());
+
+  std::vector<at::Tensor> inputTensors = {inputTensor};
+  std::vector<at::Tensor> outputTensors = {outputTensor};
+  SAVE_TENSORS(inputTensors, data->src);
+  SAVE_TENSORS(outputTensors, data->dst);
+
+  return collective_post(
+      OpType::_ALLGATHER_BASE,
+      []() {},
+      []() {},
+      coll,
+      std::unique_ptr<WorkData>(data),
+      outputTensor.device(),
+      outputTensors,
+      "ucc:allgather_base");
 }
 
 c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::allreduce(
