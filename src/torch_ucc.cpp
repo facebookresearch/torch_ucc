@@ -117,6 +117,7 @@ struct torch_ucc_config_t {
 
 std::map<std::string, std::string> torch_ucc_envs_map = {
     {"TORCH_UCC_ALLGATHER_BLOCKING_WAIT", "1"},
+    {"TORCH_UCC_ALLGATHER_BASE_BLOCKING_WAIT", "1"},
     {"TORCH_UCC_ALLREDUCE_BLOCKING_WAIT", "1"},
     {"TORCH_UCC_ALLTOALL_BLOCKING_WAIT", "1"},
     {"TORCH_UCC_BCAST_BLOCKING_WAIT", "1"},
@@ -150,6 +151,8 @@ void read_confg() {
   }
   torch_ucc_config.blocking_wait[(std::uint8_t)OpType::ALLGATHER] =
       std::stoi(torch_ucc_envs_map.at("TORCH_UCC_ALLGATHER_BLOCKING_WAIT"));
+  torch_ucc_config.blocking_wait[(std::uint8_t)OpType::_ALLGATHER_BASE] =
+      std::stoi(torch_ucc_envs_map.at("TORCH_UCC_ALLGATHER_BASE_BLOCKING_WAIT"));
   torch_ucc_config.blocking_wait[(std::uint8_t)OpType::ALLREDUCE] =
       std::stoi(torch_ucc_envs_map.at("TORCH_UCC_ALLREDUCE_BLOCKING_WAIT"));
   torch_ucc_config.blocking_wait[(std::uint8_t)OpType::ALLTOALL_BASE] =
