@@ -106,6 +106,8 @@ jobs:
         /bin/bash ./test/start_test.sh /tmp/param/train/comms/pt/comms.py --backend ucc --device cpu --b 4 --e 4M --c 1 --collective broadcast
         echo "PARAM-Comms Allgather w/ UCC"
         /bin/bash ./test/start_test.sh /tmp/param/train/comms/pt/comms.py --backend ucc --device cpu --b 4 --e 4M --c 1 --collective all_gather
+        echo "PARAM-Comms Allgather_base w/ UCC"
+        /bin/bash ./test/start_test.sh /tmp/param/train/comms/pt/comms.py --backend ucc --device cpu --b 4 --e 4M --c 1 --collective all_gather_base
         # FIXME: disabled as UCC does not support gather on CPU tensor yet
         # echo "PARAM-Comms Gather w/ UCC"
         # /bin/bash ./test/start_test.sh /tmp/param/train/comms/pt/comms.py --backend ucc --device cpu --b 4 --e 4M --c 1 --collective gather
