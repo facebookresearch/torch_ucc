@@ -324,25 +324,30 @@ std::shared_ptr<CommPG> CommPG::get_comm(
   std::lock_guard<std::mutex> lock(m);
   id = (comm_id % TORCH_UCX_MAX_COMM);
 
+  std::string group_id = "group_id";
+  if (is_health_check) {
+    group_id = c10::str(dev.type()) + "/" + group_id;
+  }
+
   std::vector<uint8_t> remote_comm_id;
-  oob->store->deleteKey("group_id" + std::to_string(0));
+  oob->store->deleteKey(group_id + std::to_string(0));
   if (oob->rank != 0) {
     std::vector<uint8_t> val = std::vector<uint8_t>(
         reinterpret_cast<uint8_t*>(&id),
         reinterpret_cast<uint8_t*>(&id) + sizeof(id));
-    oob->store->set("group_id" + std::to_string(oob->rank), val);
+    oob->store->set(group_id + std::to_string(oob->rank), val);
   } else {
     for (int i = 1; i < oob->size; i++) {
-      remote_comm_id = oob->store->get("group_id" + std::to_string(i));
-      oob->store->deleteKey("group_id" + std::to_string(i));
+      remote_comm_id = oob->store->get(group_id + std::to_string(i));
+      oob->store->deleteKey(group_id + std::to_string(i));
       id = std::max(id, *(reinterpret_cast<uint32_t*>(remote_comm_id.data())));
     }
     std::vector<uint8_t> val = std::vector<uint8_t>(
         reinterpret_cast<uint8_t*>(&id),
         reinterpret_cast<uint8_t*>(&id) + sizeof(id));
-    oob->store->set("group_id" + std::to_string(oob->rank), val);
+    oob->store->set(group_id + std::to_string(oob->rank), val);
   }
-  remote_comm_id = oob->store->get("group_id" + std::to_string(0));
+  remote_comm_id = oob->store->get(group_id + std::to_string(0));
   oob->comm_id = *(reinterpret_cast<uint32_t*>(remote_comm_id.data()));
   comm_id = oob->comm_id + 1;
 
@@ -768,6 +773,7 @@ void ProcessGroupUCC::runHealthCheck() {
 #else
     auto device = c10::Device(c10::kCPU);
 #endif
+
     bool is_last_device = (device == c10::kCPU);
     try {
       auto oob = std::make_shared<torch_ucc_oob_coll_info_t>();
