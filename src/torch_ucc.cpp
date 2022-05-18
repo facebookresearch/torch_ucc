@@ -11,6 +11,7 @@
 #include "torch_ucc.hpp"
 #include "torch_ucc_comm.hpp"
 #include <memory>
+#include <list>
 
 namespace c10d {
 
@@ -769,7 +770,11 @@ void ProcessGroupUCC::runHealthCheck() {
 
   auto t = std::thread([&healthCheckData, this]() {
 #ifdef USE_CUDA
-    for (auto device : {getCUDADeviceForRank(rank_), c10::Device(c10::kCPU)}) {
+    std::list<c10::Device> devices{c10::kCPU};
+    if (at::cuda::is_available()) {
+      devices.emplace_front(getCUDADeviceForRank(rank_));
+    }
+    for (auto device : devices) {
 #else
     auto device = c10::Device(c10::kCPU);
 #endif
