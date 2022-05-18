@@ -737,6 +737,16 @@ ProcessGroupUCC::~ProcessGroupUCC() {
   }
 }
 
+#ifdef USE_CUDA
+// Return CUDA device with ordinal given by input rank.
+at::Device getCUDADeviceForRank(int rank) {
+  TORCH_CHECK(rank >= 0, "Invalid rank ", rank);
+  auto numGPUs = at::cuda::getNumGPUs();
+  int16_t deviceIdx = static_cast<int16_t>(rank % numGPUs);
+  return at::Device(at::DeviceType::CUDA, deviceIdx);
+}
+#endif
+
 void ProcessGroupUCC::runHealthCheck() {
   // Run health check in a separate thread and wait on CV to handle timeouts.
   // This design allows us to handle hangs.
@@ -751,7 +761,14 @@ void ProcessGroupUCC::runHealthCheck() {
     bool uccHealthCheckSuccess = false;
     std::exception_ptr healthCheckException;
   } healthCheckData;
+
   auto t = std::thread([&healthCheckData, this]() {
+#ifdef USE_CUDA
+    for (auto device : {getCUDADeviceForRank(rank_), c10::Device(c10::kCPU)}) {
+#else
+    auto device = c10::Device(c10::kCPU);
+#endif
+    bool is_last_device = (device == c10::kCPU);
     try {
       auto oob = std::make_shared<torch_ucc_oob_coll_info_t>();
       oob->rank = this->oob->rank;
@@ -762,13 +779,12 @@ void ProcessGroupUCC::runHealthCheck() {
       ucc_team_h team = nullptr;
       uint32_t comm_id;
 
-      // auto comm = std::make_unique<CommPG>(logger, oob, c10::kCPU, true);//comm_id, c10::kCPU, oob, logger, true);
-      auto comm = CommPG::get_comm(comm_id, c10::kCPU, oob, logger, true);
+      auto comm = CommPG::get_comm(comm_id, device, oob, logger, true);
       comm->ucx_connect_eps(eps, oob);
       comm->ucx_disconnect_eps(eps, oob);
       TORCH_UCC_LOG_INFO(TORCH_UCC_HEALTH_CHECK, "UCX library health check succeed.");
       // Mark ucx health check as complete.
-      {
+      if (is_last_device) {
         std::lock_guard<std::mutex> lk(healthCheckData.healthCheckMutex);
         healthCheckData.ucxHealthCheckSuccess = true;
       }
@@ -777,7 +793,7 @@ void ProcessGroupUCC::runHealthCheck() {
       comm->ucc_destroy_team(team);
       TORCH_UCC_LOG_INFO(TORCH_UCC_HEALTH_CHECK, "UCC library health check succeed.");
       // Mark ucc health check as complete.
-      {
+      if (is_last_device) {
         std::lock_guard<std::mutex> lk(healthCheckData.healthCheckMutex);
         healthCheckData.uccHealthCheckSuccess = true;
       }
@@ -785,20 +801,28 @@ void ProcessGroupUCC::runHealthCheck() {
       comm = nullptr;
       oob = nullptr;
       // Notify main thread the health check is complete.
-      healthCheckData.healthCheckCv.notify_one();
+      if (is_last_device) {
+        healthCheckData.healthCheckCv.notify_one();
+      }
     } catch (const std::exception& e) {
       // Populate exception ptr.
       healthCheckData.healthCheckException = std::current_exception();
       // Unblock waiting main thread which will report exception.
       healthCheckData.healthCheckCv.notify_one();
     } // Unknown exceptions will just cause the program to terminate.
+#ifdef USE_CUDA
+    }
+#endif
   });
   // We don't need to join the thread, just need to verify health check via the
   // CV. Hence we detach the thread here.
   t.detach(); // NOLINT
-  LOG(INFO) << "[Rank " << rank_ << "]"
-            << " will wait up to " << timeout_.count()
-            << " msec for NCCL health check to complete.";
+  TORCH_UCC_LOG_INFO(
+      TORCH_UCC_HEALTH_CHECK,
+      c10::str(
+          "will wait up to ", timeout_.count(),
+          " msec for UCC health check to complete.")
+  );
   std::unique_lock<std::mutex> lock(healthCheckData.healthCheckMutex);
   healthCheckData.healthCheckCv.wait_for(
       lock, timeout_, [&healthCheckData]() {
