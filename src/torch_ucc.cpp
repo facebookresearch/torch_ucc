@@ -774,54 +774,51 @@ void ProcessGroupUCC::runHealthCheck() {
     if (at::cuda::is_available()) {
       devices.emplace_front(getCUDADeviceForRank(rank_));
     }
-#endif 
-    for (auto device : devices) {
-
-    bool is_last_device = (device == c10::kCPU);
-    try {
-      auto oob = std::make_shared<torch_ucc_oob_coll_info_t>();
-      oob->rank = this->oob->rank;
-      oob->size = this->oob->size;
-      oob->store = this->oob->store;
-
-      std::vector<ucp_ep_h> eps;
-      ucc_team_h team = nullptr;
-      uint32_t comm_id;
-
-      auto comm = CommPG::get_comm(comm_id, device, oob, logger, true);
-      comm->ucx_connect_eps(eps, oob);
-      comm->ucx_disconnect_eps(eps, oob);
-      TORCH_UCC_LOG_INFO(TORCH_UCC_HEALTH_CHECK, "UCX library health check succeed.");
-      // Mark ucx health check as complete.
-      if (is_last_device) {
-        std::lock_guard<std::mutex> lk(healthCheckData.healthCheckMutex);
-        healthCheckData.ucxHealthCheckSuccess = true;
-      }
-
-      comm->ucc_create_team(team, oob);
-      comm->ucc_destroy_team(team);
-      TORCH_UCC_LOG_INFO(TORCH_UCC_HEALTH_CHECK, "UCC library health check succeed.");
-      // Mark ucc health check as complete.
-      if (is_last_device) {
-        std::lock_guard<std::mutex> lk(healthCheckData.healthCheckMutex);
-        healthCheckData.uccHealthCheckSuccess = true;
-      }
-
-      comm = nullptr;
-      oob = nullptr;
-      // Notify main thread the health check is complete.
-      if (is_last_device) {
-        healthCheckData.healthCheckCv.notify_one();
-      }
-    } catch (const std::exception& e) {
-      // Populate exception ptr.
-      healthCheckData.healthCheckException = std::current_exception();
-      // Unblock waiting main thread which will report exception.
-      healthCheckData.healthCheckCv.notify_one();
-    } // Unknown exceptions will just cause the program to terminate.
-#ifdef USE_CUDA
-    }
 #endif
+    for (auto device : devices) {
+      bool is_last_device = (device == c10::kCPU);
+      try {
+        auto oob = std::make_shared<torch_ucc_oob_coll_info_t>();
+        oob->rank = this->oob->rank;
+        oob->size = this->oob->size;
+        oob->store = this->oob->store;
+
+        std::vector<ucp_ep_h> eps;
+        ucc_team_h team = nullptr;
+        uint32_t comm_id;
+
+        auto comm = CommPG::get_comm(comm_id, device, oob, logger, true);
+        comm->ucx_connect_eps(eps, oob);
+        comm->ucx_disconnect_eps(eps, oob);
+        TORCH_UCC_LOG_INFO(TORCH_UCC_HEALTH_CHECK, "UCX library health check succeed.");
+        // Mark ucx health check as complete.
+        if (is_last_device) {
+          std::lock_guard<std::mutex> lk(healthCheckData.healthCheckMutex);
+          healthCheckData.ucxHealthCheckSuccess = true;
+        }
+
+        comm->ucc_create_team(team, oob);
+        comm->ucc_destroy_team(team);
+        TORCH_UCC_LOG_INFO(TORCH_UCC_HEALTH_CHECK, "UCC library health check succeed.");
+        // Mark ucc health check as complete.
+        if (is_last_device) {
+          std::lock_guard<std::mutex> lk(healthCheckData.healthCheckMutex);
+          healthCheckData.uccHealthCheckSuccess = true;
+        }
+
+        comm = nullptr;
+        oob = nullptr;
+        // Notify main thread the health check is complete.
+        if (is_last_device) {
+          healthCheckData.healthCheckCv.notify_one();
+        }
+      } catch (const std::exception& e) {
+        // Populate exception ptr.
+        healthCheckData.healthCheckException = std::current_exception();
+        // Unblock waiting main thread which will report exception.
+        healthCheckData.healthCheckCv.notify_one();
+      } // Unknown exceptions will just cause the program to terminate.
+    }
   });
   // We don't need to join the thread, just need to verify health check via the
   // CV. Hence we detach the thread here.
