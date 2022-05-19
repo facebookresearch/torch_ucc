@@ -769,15 +769,13 @@ void ProcessGroupUCC::runHealthCheck() {
   } healthCheckData;
 
   auto t = std::thread([&healthCheckData, this]() {
-#ifdef USE_CUDA
     std::list<c10::Device> devices{c10::kCPU};
+#ifdef USE_CUDA
     if (at::cuda::is_available()) {
       devices.emplace_front(getCUDADeviceForRank(rank_));
     }
+#endif 
     for (auto device : devices) {
-#else
-    auto device = c10::Device(c10::kCPU);
-#endif
 
     bool is_last_device = (device == c10::kCPU);
     try {
