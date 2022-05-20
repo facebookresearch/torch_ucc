@@ -790,7 +790,12 @@ void ProcessGroupUCC::runHealthCheck() {
         auto comm = CommPG::get_comm(comm_id, device, oob, logger, true);
         comm->ucx_connect_eps(eps, oob);
         comm->ucx_disconnect_eps(eps, oob);
-        TORCH_UCC_LOG_INFO(TORCH_UCC_HEALTH_CHECK, "UCX library health check succeed.");
+        TORCH_UCC_LOG_INFO(
+            TORCH_UCC_HEALTH_CHECK,
+            c10::str(
+                "UCX library health check succeed for device ",
+                c10::DeviceTypeName(device))
+        );
         // Mark ucx health check as complete.
         if (is_last_device) {
           std::lock_guard<std::mutex> lk(healthCheckData.healthCheckMutex);
@@ -799,7 +804,12 @@ void ProcessGroupUCC::runHealthCheck() {
 
         comm->ucc_create_team(team, oob);
         comm->ucc_destroy_team(team);
-        TORCH_UCC_LOG_INFO(TORCH_UCC_HEALTH_CHECK, "UCC library health check succeed.");
+        TORCH_UCC_LOG_INFO(
+            TORCH_UCC_HEALTH_CHECK,
+            c10::str(
+                "UCC library health check succeed for device ",
+                c10::DeviceTypeName(device))
+        );
         // Mark ucc health check as complete.
         if (is_last_device) {
           std::lock_guard<std::mutex> lk(healthCheckData.healthCheckMutex);
