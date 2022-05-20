@@ -794,7 +794,7 @@ void ProcessGroupUCC::runHealthCheck() {
             TORCH_UCC_HEALTH_CHECK,
             c10::str(
                 "UCX library health check succeed for device ",
-                c10::DeviceTypeName(device))
+                c10::DeviceTypeName(device.type()))
         );
         // Mark ucx health check as complete.
         if (is_last_device) {
@@ -808,7 +808,7 @@ void ProcessGroupUCC::runHealthCheck() {
             TORCH_UCC_HEALTH_CHECK,
             c10::str(
                 "UCC library health check succeed for device ",
-                c10::DeviceTypeName(device))
+                c10::DeviceTypeName(device.type()))
         );
         // Mark ucc health check as complete.
         if (is_last_device) {
