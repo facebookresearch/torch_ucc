@@ -11,6 +11,7 @@
 #include "torch_ucc.hpp"
 #include "torch_ucc_comm.hpp"
 #include <memory>
+#include <list>
 
 namespace c10d {
 
@@ -113,6 +114,7 @@ struct torch_ucc_config_t {
   bool use_future;
   bool shared_comm;
   bool use_allgatherv;
+  bool enable_health_check;
 } torch_ucc_config;
 
 std::map<std::string, std::string> torch_ucc_envs_map = {
@@ -129,6 +131,7 @@ std::map<std::string, std::string> torch_ucc_envs_map = {
     {"TORCH_UCC_TLS", "nccl,ucp"},
     {"TORCH_UCC_SHARED_COMM", "1"},
     {"TORCH_UCC_USE_ALLGATHERV", "0"},
+    {"TORCH_UCC_ENABLE_HEALTH_CHECK", "0"},
 };
 
 } // namespace
@@ -140,6 +143,7 @@ void read_confg() {
   torch_ucc_config.use_future = true;
   torch_ucc_config.shared_comm = false;
   torch_ucc_config.use_allgatherv = false;
+  torch_ucc_config.enable_health_check = false;
 
   // read all torch_ucc env. variables and update the map
   char* env;
@@ -173,6 +177,8 @@ void read_confg() {
       std::stoi(torch_ucc_envs_map.at("TORCH_UCC_SHARED_COMM"));
   torch_ucc_config.use_allgatherv =
       std::stoi(torch_ucc_envs_map.at("TORCH_UCC_USE_ALLGATHERV"));
+  torch_ucc_config.enable_health_check =
+      std::stoi(torch_ucc_envs_map.at("TORCH_UCC_ENABLE_HEALTH_CHECK"));
 }
 
 void check_device(c10::Device dev1, c10::Device dev2) {
@@ -288,11 +294,13 @@ void ProcessGroupUCC::ProgressEntry::finalize(std::exception_ptr eptr) {
 CommPG::CommPG(
     const c10::intrusive_ptr<ProcessGroupUCCLogger>& logger_,
     std::shared_ptr<torch_ucc_oob_coll_info_t> oob_,
-    c10::Device dev)
+    c10::Device dev,
+    bool is_health_check)
     : logger(logger_),
       oob(oob_),
       ucx_comm(oob->size, logger),
       ucc_comm(oob, logger),
+      finalize_phase(is_health_check ? TORCH_UCC_HEALTH_CHECK : TORCH_UCC_FINALIZE),
       cuda_device_index(TORCH_UCC_DEVICE_NOT_SET) {
   if (dev.is_cuda()) {
     cuda_device_index = dev.index();
@@ -317,7 +325,8 @@ std::shared_ptr<CommPG> CommPG::get_comm(
     uint32_t& id,
     c10::Device dev,
     std::shared_ptr<torch_ucc_oob_coll_info_t> oob,
-    const c10::intrusive_ptr<ProcessGroupUCCLogger>& logger) {
+    const c10::intrusive_ptr<ProcessGroupUCCLogger>& logger,
+    bool is_health_check) {
   static std::mutex m;
   static std::weak_ptr<CommPG> comm;
   static uint32_t comm_id;
@@ -325,23 +334,30 @@ std::shared_ptr<CommPG> CommPG::get_comm(
   std::lock_guard<std::mutex> lock(m);
   id = (comm_id % TORCH_UCX_MAX_COMM);
 
+  std::string group_id = "group_id";
+  if (is_health_check) {
+    group_id = c10::str(dev.type()) + "/" + group_id;
+  }
+
   std::vector<uint8_t> remote_comm_id;
+  oob->store->deleteKey(group_id + std::to_string(0));
   if (oob->rank != 0) {
     std::vector<uint8_t> val = std::vector<uint8_t>(
         reinterpret_cast<uint8_t*>(&id),
         reinterpret_cast<uint8_t*>(&id) + sizeof(id));
-    oob->store->set("group_id" + std::to_string(oob->rank), val);
+    oob->store->set(group_id + std::to_string(oob->rank), val);
   } else {
     for (int i = 1; i < oob->size; i++) {
-      remote_comm_id = oob->store->get("group_id" + std::to_string(i));
+      remote_comm_id = oob->store->get(group_id + std::to_string(i));
+      oob->store->deleteKey(group_id + std::to_string(i));
       id = std::max(id, *(reinterpret_cast<uint32_t*>(remote_comm_id.data())));
     }
     std::vector<uint8_t> val = std::vector<uint8_t>(
         reinterpret_cast<uint8_t*>(&id),
         reinterpret_cast<uint8_t*>(&id) + sizeof(id));
-    oob->store->set("group_id" + std::to_string(oob->rank), val);
+    oob->store->set(group_id + std::to_string(oob->rank), val);
   }
-  remote_comm_id = oob->store->get("group_id" + std::to_string(0));
+  remote_comm_id = oob->store->get(group_id + std::to_string(0));
   oob->comm_id = *(reinterpret_cast<uint32_t*>(remote_comm_id.data()));
   comm_id = oob->comm_id + 1;
 
@@ -349,14 +365,14 @@ std::shared_ptr<CommPG> CommPG::get_comm(
     std::shared_ptr<CommPG> shared_comm = comm.lock();
     if (!shared_comm) {
       shared_comm = std::make_shared<CommPG>(
-          logger, oob, dev);
+          logger, oob, dev, is_health_check);
       comm = shared_comm;
     } else {
       if (dev.is_cuda()) {
         if ((shared_comm->cuda_device_index != TORCH_UCC_DEVICE_NOT_SET) &&
             (shared_comm->cuda_device_index != dev.index())) {
           TORCH_UCC_LOG_ERROR(
-              TORCH_UCC_INIT,
+              is_health_check ? TORCH_UCC_HEALTH_CHECK : TORCH_UCC_INIT,
               "ucc communicator was initialized with different cuda device,"
               "multi device is not supported");
           throw std::runtime_error(ucc_status_string(UCC_ERR_NOT_SUPPORTED));
@@ -366,7 +382,7 @@ std::shared_ptr<CommPG> CommPG::get_comm(
     }
     return shared_comm;
   } else {
-    return std::make_shared<CommPG>(logger, oob, dev);
+    return std::make_shared<CommPG>(logger, oob, dev, is_health_check);
   }
 }
 
@@ -407,7 +423,7 @@ void CommPG::ucx_disconnect_eps(
     ucs_status_ptr_t close_req = ucp_ep_close_nb(ep, UCP_EP_CLOSE_MODE_FLUSH);
     if (UCS_PTR_IS_ERR(close_req)) {
       TORCH_UCC_LOG_ERROR(
-          TORCH_UCC_FINALIZE,
+          finalize_phase,
           "failed to close endpoint, ignore and continue...");
       return;
     }
@@ -525,7 +541,7 @@ void CommPG::ucc_destroy_team(ucc_team_h& team) {
   while (UCC_INPROGRESS == (status = ucc_team_destroy(team))) {
     if (UCC_OK != status) {
       TORCH_UCC_LOG_ERROR(
-          TORCH_UCC_FINALIZE,
+          finalize_phase,
           c10::str("ucc team destroy error: ", ucc_status_string(status)));
       break;
     }
@@ -692,6 +708,15 @@ ProcessGroupUCC::ProcessGroupUCC(
       c10::str(
           "Successfully read and set ProcessGroupUCC env. variables as followings",
           envs));
+
+  if (torch_ucc_config.enable_health_check) {
+    // Perform health check by initializing dummy communicators and destroying
+    // them. This will help indicate any UCC/UCX-related issues prior to the first
+    // collective.
+    // Run it in a separate thread and wait on CV to handle timeouts so that if there
+    // are hangs, the main thread can still run correctly.
+    runHealthCheck();
+  }
 }
 
 ProcessGroupUCC::~ProcessGroupUCC() {
@@ -725,6 +750,122 @@ ProcessGroupUCC::~ProcessGroupUCC() {
     }
     comm = nullptr;
   }
+}
+
+#ifdef USE_CUDA
+// Return CUDA device with ordinal given by input rank.
+at::Device getCUDADeviceForRank(int rank) {
+  TORCH_CHECK(rank >= 0, "Invalid rank ", rank);
+  auto numGPUs = at::cuda::getNumGPUs();
+  int16_t deviceIdx = static_cast<int16_t>(rank % numGPUs);
+  return at::Device(at::DeviceType::CUDA, deviceIdx);
+}
+#endif
+
+void ProcessGroupUCC::runHealthCheck() {
+  // Run health check in a separate thread and wait on CV to handle timeouts.
+  // This design allows us to handle hangs.
+
+  // When size_ is 1, there is no need to do any communication at all.
+  if (size_ == 1) return;
+
+  struct HealthCheckData {
+    std::mutex healthCheckMutex;
+    std::condition_variable healthCheckCv;
+    bool ucxHealthCheckSuccess = false;
+    bool uccHealthCheckSuccess = false;
+    std::exception_ptr healthCheckException;
+  } healthCheckData;
+
+  auto t = std::thread([&healthCheckData, this]() {
+    std::list<c10::Device> devices{c10::kCPU};
+#ifdef USE_CUDA
+    if (at::cuda::is_available()) {
+      devices.emplace_front(getCUDADeviceForRank(rank_));
+    }
+#endif
+    for (auto device : devices) {
+      bool is_last_device = (device == c10::kCPU);
+      try {
+        auto oob = std::make_shared<torch_ucc_oob_coll_info_t>();
+        oob->rank = this->oob->rank;
+        oob->size = this->oob->size;
+        oob->store = this->oob->store;
+
+        std::vector<ucp_ep_h> eps;
+        ucc_team_h team = nullptr;
+        uint32_t comm_id;
+
+        auto comm = CommPG::get_comm(comm_id, device, oob, logger, true);
+        comm->ucx_connect_eps(eps, oob);
+        comm->ucx_disconnect_eps(eps, oob);
+        TORCH_UCC_LOG_INFO(
+            TORCH_UCC_HEALTH_CHECK,
+            c10::str(
+                "UCX library health check succeed for device ",
+                c10::DeviceTypeName(device.type()))
+        );
+        // Mark ucx health check as complete.
+        if (is_last_device) {
+          std::lock_guard<std::mutex> lk(healthCheckData.healthCheckMutex);
+          healthCheckData.ucxHealthCheckSuccess = true;
+        }
+
+        comm->ucc_create_team(team, oob);
+        comm->ucc_destroy_team(team);
+        TORCH_UCC_LOG_INFO(
+            TORCH_UCC_HEALTH_CHECK,
+            c10::str(
+                "UCC library health check succeed for device ",
+                c10::DeviceTypeName(device.type()))
+        );
+        // Mark ucc health check as complete.
+        if (is_last_device) {
+          std::lock_guard<std::mutex> lk(healthCheckData.healthCheckMutex);
+          healthCheckData.uccHealthCheckSuccess = true;
+        }
+
+        comm = nullptr;
+        oob = nullptr;
+        // Notify main thread the health check is complete.
+        if (is_last_device) {
+          healthCheckData.healthCheckCv.notify_one();
+        }
+      } catch (const std::exception& e) {
+        // Populate exception ptr.
+        healthCheckData.healthCheckException = std::current_exception();
+        // Unblock waiting main thread which will report exception.
+        healthCheckData.healthCheckCv.notify_one();
+      } // Unknown exceptions will just cause the program to terminate.
+    }
+  });
+  // We don't need to join the thread, just need to verify health check via the
+  // CV. Hence we detach the thread here.
+  t.detach(); // NOLINT
+  TORCH_UCC_LOG_INFO(
+      TORCH_UCC_HEALTH_CHECK,
+      c10::str(
+          "will wait up to ", timeout_.count(),
+          " msec for UCC health check to complete.")
+  );
+  std::unique_lock<std::mutex> lock(healthCheckData.healthCheckMutex);
+  healthCheckData.healthCheckCv.wait_for(
+      lock, timeout_, [&healthCheckData]() {
+        return healthCheckData.ucxHealthCheckSuccess && healthCheckData.uccHealthCheckSuccess;
+      });
+
+  if (healthCheckData.healthCheckException) {
+    std::rethrow_exception(healthCheckData.healthCheckException);
+  }
+  // If there is no exception, the likely culprit is a timeout/hang
+  TORCH_CHECK(
+      healthCheckData.ucxHealthCheckSuccess,
+      "ProcessGroupUCC: Health check failure: Failed to initialize UCX on rank ",
+      rank_);
+  TORCH_CHECK(
+      healthCheckData.uccHealthCheckSuccess,
+      "ProcessGroupUCC: Health check failure: Failed to initialize UCC on rank ",
+      rank_);
 }
 
 void ProcessGroupUCC::set_timeout(ucc_coll_args_t& args) {

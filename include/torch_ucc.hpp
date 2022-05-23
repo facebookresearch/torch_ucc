@@ -214,7 +214,14 @@ class ProcessGroupUCC : public ProcessGroup {
 	std::unique_ptr<at::cuda::CUDAEvent> getPooledEvent();
 #endif
 
-template <typename PreProcess, typename PostProcess>
+  // Performs a health check by initializing dummy UCC & UCX communicators and then
+  // destroying them. This will help indicate and signal any UCC/UCX-related issues
+  // prior to the first collective. The actual initialization and subsequent
+  // destruction is ran on a separate thread and the main thread is signalled
+  // about timeouts/errors to report to the application.
+  void runHealthCheck();
+
+  template <typename PreProcess, typename PostProcess>
   c10::intrusive_ptr<ProcessGroup::Work> collective_post(
       OpType opType,
       PreProcess preproc,
@@ -323,7 +330,6 @@ class CommPG {
   std::shared_ptr<torch_ucc_oob_coll_info_t> oob;
   CommUCX ucx_comm;
   CommUCC ucc_comm;
-  c10::DeviceIndex device_index;
   std::mutex mutex;
   std::thread progress_thread;
   std::condition_variable queue_produce_cv;
@@ -331,11 +337,13 @@ class CommPG {
   std::deque<std::shared_ptr<ProcessGroupUCC::ProgressEntry>> progress_queue;
   bool stop_progress_loop;
   bool collective_inprogress;
+  torch_ucc_phase_t finalize_phase;
 
  public:
   c10::DeviceIndex cuda_device_index;
   CommPG(const c10::intrusive_ptr<ProcessGroupUCCLogger>& logger,
-      std::shared_ptr<torch_ucc_oob_coll_info_t> oob, c10::Device dev);
+      std::shared_ptr<torch_ucc_oob_coll_info_t> oob,
+      c10::Device dev, bool is_health_check);
 
   ~CommPG();
 
@@ -377,7 +385,8 @@ class CommPG {
       uint32_t& id,
       c10::Device dev,
       std::shared_ptr<torch_ucc_oob_coll_info_t> oob,
-      const c10::intrusive_ptr<ProcessGroupUCCLogger>& logger);
+      const c10::intrusive_ptr<ProcessGroupUCCLogger>& logger,
+      bool is_health_check = false);
 
   void progress_loop();
 
