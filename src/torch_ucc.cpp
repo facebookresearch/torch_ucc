@@ -368,7 +368,7 @@ std::shared_ptr<CommPG> CommPG::get_comm(
           logger, oob, dev, is_health_check);
       comm = shared_comm;
     } else {
-      if (dev.is_cuda()) {
+      if (dev.is_cuda() && !is_health_check) {
         if ((shared_comm->cuda_device_index != TORCH_UCC_DEVICE_NOT_SET) &&
             (shared_comm->cuda_device_index != dev.index())) {
           TORCH_UCC_LOG_ERROR(
