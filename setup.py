@@ -47,7 +47,8 @@ def check_if_rocm_pytorch():
 IS_ROCM_PYTORCH = check_if_rocm_pytorch()
 
 plugin_sources      = ["src/torch_ucc.cpp",
-                       "src/torch_ucc_comm.cpp"]
+                       "src/torch_ucc_comm.cpp",
+                       "src/torch_ucc_tracing.cpp"]
 plugin_include_dirs = ["{}/include/".format(ucc_plugin_dir),
                        "{}/include/".format(ucx_home),
                        "{}/include/".format(ucc_home)]
