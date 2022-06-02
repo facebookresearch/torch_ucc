@@ -1102,6 +1102,8 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::_allgather_base(
   WorkData* data = new WorkData();
 
   ucc_coll_args_t coll;
+  coll.mask = 0;
+  coll.flags = 0;
   coll.coll_type = UCC_COLL_TYPE_ALLGATHER;
   coll.src.info.buffer = inputTensor.data_ptr();
   coll.src.info.count = inputTensor.numel();
@@ -1271,6 +1273,7 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::alltoall_base(
             (inputTensor.size(0) % size_ == 0),
         "Tensor's dim 0 does not divide equally across group size");
     coll.mask = 0;
+    coll.flags = 0;
     coll.coll_type = UCC_COLL_TYPE_ALLTOALL;
     coll.src.info.buffer = inputTensor.data_ptr();
     coll.src.info.count = inputTensor.element_size() * inputTensor.numel();
