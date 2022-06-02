@@ -151,7 +151,7 @@ class ProcessGroupUCC : public ProcessGroup {
     friend class ProcessGroupUCC;
     friend class CommPG;
 
-  public:
+   public:
     ProgressEntry(
         CommBase* comm,
         ucc_coll_req_h request)
@@ -174,6 +174,11 @@ class ProcessGroupUCC : public ProcessGroup {
         OpType opType,
         const char* prof_title)
         : ProcessGroup::Work(-1, opType, prof_title) {}
+    WorkUCC(
+        OpType opType,
+        const char* prof_title,
+        const c10::intrusive_ptr<ProcessGroupUCCLogger>& logger)
+        : ProcessGroup::Work(-1, opType, prof_title), logger_(logger) {}
     ~WorkUCC();
     void setException();
     void setAndThrowException();
@@ -188,13 +193,14 @@ class ProcessGroupUCC : public ProcessGroup {
 #endif
    protected:
     std::shared_ptr<ProgressEntry> entry_;
+    c10::intrusive_ptr<ProcessGroupUCCLogger> logger_;
+
    private:
     // The future returned by getFuture.
     c10::intrusive_ptr<at::ivalue::Future> future_;
     // Store a reference to collective's outputs, used by result
     std::shared_ptr<std::vector<at::Tensor>> outputs_;
   };
-
 
   explicit ProcessGroupUCC(
       const c10::intrusive_ptr<Store>& store,
@@ -229,9 +235,9 @@ class ProcessGroupUCC : public ProcessGroup {
       ucc_coll_args_t& coll,
       std::unique_ptr<ProcessGroupUCC::WorkData> data,
       c10::Device dev,
-      std::vector<at::Tensor> &outputTensors,
-      const char* prof_title
-	);
+      std::vector<at::Tensor>& inputTensors,
+      std::vector<at::Tensor>& outputTensors,
+      const char* prof_title);
 
   c10::intrusive_ptr<ProcessGroup::Work> broadcast(
       std::vector<at::Tensor>& data,

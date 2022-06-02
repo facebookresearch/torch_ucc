@@ -112,6 +112,8 @@ const std::map<torch_ucc_phase_t, std::string> ucc_phase_map = {
     {TORCH_UCC_FINALIZE, "FINALIZE"},
 };
 
+class CommTraceLogger;
+
 class TORCH_API ProcessGroupUCCLogger : public torch::CustomClassHolder {
  public:
   ProcessGroupUCCLogger();
@@ -123,9 +125,14 @@ class TORCH_API ProcessGroupUCCLogger : public torch::CustomClassHolder {
     local_phase = phase;
   }
 
+  void initCommsTracer();
+  void flushComms(int rank, int world_size);
+  std::shared_ptr<CommTraceLogger> trace_generator = nullptr;
+
  protected:
   std::string log_prefix;
   torch_ucc_phase_t local_phase = TORCH_UCC_UNKNOWN;
+  bool initialized_CommTraceLogger = false;
 };
 
 struct torch_ucc_oob_coll_info_t {

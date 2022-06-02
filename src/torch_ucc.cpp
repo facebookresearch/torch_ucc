@@ -10,6 +10,7 @@
 
 #include "torch_ucc.hpp"
 #include "torch_ucc_comm.hpp"
+#include "torch_ucc_tracing.hpp"
 #include <memory>
 #include <list>
 
@@ -111,6 +112,7 @@ struct torch_ucc_config_t {
   std::once_flag flag;
   std::array<bool, 32> blocking_wait;
   bool enable_profiling;
+  bool enable_comms_logger;
   bool use_future;
   bool shared_comm;
   bool use_allgatherv;
@@ -124,6 +126,7 @@ std::map<std::string, std::string> torch_ucc_envs_map = {
     {"TORCH_UCC_ALLTOALL_BLOCKING_WAIT", "1"},
     {"TORCH_UCC_BCAST_BLOCKING_WAIT", "1"},
     {"TORCH_UCC_GATHER_BLOCKING_WAIT", "1"},
+    {"TORCH_UCC_ENABLE_COMMS_LOGGER", "0"},
     {"TORCH_UCC_REDUCE_SCATTER_BLOCKING_WAIT", "1"},
     {"TORCH_UCC_SCATTER_BLOCKING_WAIT", "1"},
     {"TORCH_UCC_USE_FUTURE", "1"},
@@ -144,6 +147,7 @@ void read_confg() {
   torch_ucc_config.shared_comm = false;
   torch_ucc_config.use_allgatherv = false;
   torch_ucc_config.enable_health_check = false;
+  torch_ucc_config.enable_comms_logger = false;
 
   // read all torch_ucc env. variables and update the map
   char* env;
@@ -179,6 +183,8 @@ void read_confg() {
       std::stoi(torch_ucc_envs_map.at("TORCH_UCC_USE_ALLGATHERV"));
   torch_ucc_config.enable_health_check =
       std::stoi(torch_ucc_envs_map.at("TORCH_UCC_ENABLE_HEALTH_CHECK"));
+  torch_ucc_config.enable_comms_logger =
+      std::stoi(torch_ucc_envs_map.at("TORCH_UCC_ENABLE_COMMS_LOGGER"));
 }
 
 void check_device(c10::Device dev1, c10::Device dev2) {
@@ -240,6 +246,12 @@ bool ProcessGroupUCC::WorkUCC::isSuccess() const {
 }
 
 bool ProcessGroupUCC::WorkUCC::wait(std::chrono::milliseconds /* unused */) {
+  if (torch_ucc_config.enable_comms_logger && !logger_) {
+    logger_->trace_generator->recordComms(
+        "wait",
+        (uintptr_t) this,
+        rank_);
+  }
 #ifdef USE_CUDA
   if (fence && !torch_ucc_config.blocking_wait[(int)opType_]) {
     // block user stream
@@ -554,7 +566,8 @@ c10::intrusive_ptr<ProcessGroup::Work> CommPG::enqueue_p2p(
     OpType opType,
     ucc_coll_req_h request,
     const char* prof_title) {
-  auto work = c10::make_intrusive<ProcessGroupUCC::WorkUCC>(opType, prof_title);
+  auto work = c10::make_intrusive<ProcessGroupUCC::WorkUCC>(
+      opType, prof_title, logger);
   if (torch_ucc_config.use_future) {
     work->future_ = c10::make_intrusive<at::ivalue::Future>(
         c10::ListType::create(c10::TensorType::get()));
@@ -717,9 +730,15 @@ ProcessGroupUCC::ProcessGroupUCC(
     // are hangs, the main thread can still run correctly.
     runHealthCheck();
   }
+  if (torch_ucc_config.enable_comms_logger) {
+    logger->initCommsTracer();
+  }
 }
 
 ProcessGroupUCC::~ProcessGroupUCC() {
+  if (torch_ucc_config.enable_comms_logger) {
+    logger->flushComms(this->getRank(), this->getSize());
+  }
   if (comm) {
     logger->setPhase(TORCH_UCC_FINALIZE);
     comm->ucc_destroy_team(team);
@@ -896,11 +915,21 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::collective_post(
     ucc_coll_args_t& coll,
     std::unique_ptr<ProcessGroupUCC::WorkData> data,
     c10::Device dev,
+    std::vector<at::Tensor> &inputTensors,
     std::vector<at::Tensor> &outputTensors,
     const char* prof_title) {
   set_timeout(coll);
   auto work = c10::make_intrusive<ProcessGroupUCC::WorkUCC>(
-      opType, torch_ucc_config.enable_profiling ? prof_title : nullptr);
+      opType, torch_ucc_config.enable_profiling ? prof_title : nullptr, logger);
+
+  RECORD_COMMS_TRACE(
+      logger->trace_generator,
+      work,
+      opType,
+      this->getRank(),
+      this->getSize(),
+      inputTensors,
+      outputTensors);
 
   // Store references to outputs to be used by result
   work->outputs_ = std::make_shared<std::vector<at::Tensor>>(outputTensors);
@@ -995,6 +1024,7 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::allgather(
         coll,
         std::unique_ptr<WorkData>(data),
         tensor.device(),
+        inputTensors,
         outputTensors[0],
         "ucc:allgatherv");
   } else {
@@ -1049,6 +1079,7 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::allgather(
         coll,
         std::unique_ptr<WorkData>(data),
         tensor.device(),
+        inputTensors,
         outputTensors[0],
         "ucc:allgather");
   }
@@ -1093,6 +1124,7 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::_allgather_base(
       coll,
       std::unique_ptr<WorkData>(data),
       outputTensor.device(),
+      inputTensors,
       outputTensors,
       "ucc:allgather_base");
 }
@@ -1131,6 +1163,7 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::allreduce(
       coll,
       std::unique_ptr<WorkData>(data),
       tensor.device(),
+      tensors,
       tensors,
       "ucc:allreduce");
 }
@@ -1209,6 +1242,7 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::alltoall(
       coll,
       std::unique_ptr<WorkData>(data),
       device,
+      inputTensors,
       outputTensors,
       "ucc:alltoall");
 }
@@ -1274,6 +1308,10 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::alltoall_base(
         UCC_COLL_ARGS_FLAG_CONTIG_DST_BUFFER |
         UCC_COLL_ARGS_FLAG_COUNT_64BIT |
         UCC_COLL_ARGS_FLAG_DISPLACEMENTS_64BIT;
+
+    if (torch_ucc_config.enable_comms_logger) {
+      logger->trace_generator->recordOptionalInfo(outputSplitSizes, inputSplitSizes);
+    }
   }
   std::vector<at::Tensor> inputTensors = {inputTensor};
   std::vector<at::Tensor> outputTensors = {outputTensor};
@@ -1287,6 +1325,7 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::alltoall_base(
       coll,
       std::unique_ptr<WorkData>(data),
       inputTensor.device(),
+      inputTensors,
       outputTensors,
       "ucc:alltoall");
 }
@@ -1340,6 +1379,7 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::barrier(
       nullptr,
       device,
       dummy_tensor,
+      dummy_tensor,
       "ucc:barrier");
 }
 
@@ -1367,6 +1407,10 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::broadcast(
   coll.root = opts.rootRank;
   SAVE_TENSORS(tensors, data->dst);
 
+  if (torch_ucc_config.enable_comms_logger) {
+    logger->trace_generator->recordOptionalInfo(opts.rootRank);
+  }
+
   return collective_post(
       OpType::BROADCAST,
       []() {},
@@ -1374,6 +1418,7 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::broadcast(
       coll,
       std::unique_ptr<WorkData>(data),
       tensor.device(),
+      tensors,
       tensors,
       "ucc:broadcast");
 }
@@ -1460,6 +1505,7 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::gather(
       coll,
       std::unique_ptr<WorkData>(data),
       input.device(),
+      inputTensors,
       outputs,
       "ucc:gather");
 }
@@ -1499,6 +1545,7 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::reduce(
       coll,
       std::unique_ptr<WorkData>(data),
       tensor.device(),
+      tensors,
       tensors,
       "ucc:reduce");
 }
@@ -1571,6 +1618,7 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::reduce_scatter(
     	coll,
     	std::move(data),
     	inputTensors[0][0].device(),
+      inputTensors[0],
     	outputTensors,
     	"ucc:reduce_scatter");
 }
@@ -1648,6 +1696,7 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::scatter(
       coll,
       std::unique_ptr<WorkData>(data),
       tensor.device(),
+      inputTensors[0],
       outputTensors,
       "ucc:scatter");
 }
@@ -1668,7 +1717,18 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::send(
       to_ucs_memType(tensor.device().type()),
       tensor.numel() * tensor.element_size(),
       ucp_tag);
-  return comm->enqueue_p2p(OpType::SEND, request, "ucc:send");
+
+  auto work = comm->enqueue_p2p(OpType::SEND, request, "ucc:send");
+  // TODO: record src, dst ranks and tag
+  RECORD_COMMS_TRACE(
+      logger->trace_generator,
+      work,
+      OpType::SEND,
+      this->getRank(),
+      this->getSize(),
+      tensors,
+      tensors);
+  return work;
 }
 
 c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::recv(
@@ -1687,7 +1747,18 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::recv(
       tensor.numel() * tensor.element_size(),
       ucp_tag,
       ucp_tag_mask);
-  return comm->enqueue_p2p(OpType::RECV, request, "ucc:recv");
+
+  auto work = comm->enqueue_p2p(OpType::RECV, request, "ucc:recv");
+  // TODO: record src, dst ranks and tag
+  RECORD_COMMS_TRACE(
+      logger->trace_generator,
+      work,
+      OpType::RECV,
+      this->getRank(),
+      this->getSize(),
+      tensors,
+      tensors);
+  return work;
 }
 
 c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::recvAnysource(
@@ -1706,7 +1777,18 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::recvAnysource(
       tensor.numel() * tensor.element_size(),
       ucp_tag,
       ucp_tag_mask);
-  return comm->enqueue_p2p(OpType::RECVANYSOURCE, request, "ucc:recv");
+
+  auto work = comm->enqueue_p2p(OpType::RECVANYSOURCE, request, "ucc:recv");
+  // TODO: record dst rank and tag
+  RECORD_COMMS_TRACE(
+      logger->trace_generator,
+      work,
+      OpType::RECVANYSOURCE,
+      this->getRank(),
+      this->getSize(),
+      tensors,
+      tensors);
+  return work;
 }
 
 c10::intrusive_ptr<ProcessGroup> ProcessGroupUCC::createProcessGroupUCC(

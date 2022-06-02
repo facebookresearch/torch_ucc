@@ -9,6 +9,7 @@
  */
 
 #include "torch_ucc_comm.hpp"
+#include "torch_ucc_tracing.hpp"
 
 namespace c10d {
 
