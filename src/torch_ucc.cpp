@@ -773,11 +773,11 @@ ProcessGroupUCC::~ProcessGroupUCC() {
 
 #ifdef USE_CUDA
 // Return CUDA device with ordinal given by input rank.
-at::Device getCUDADeviceForRank(int rank) {
+c10::Device getCUDADeviceForRank(int rank) {
   TORCH_CHECK(rank >= 0, "Invalid rank ", rank);
   auto numGPUs = at::cuda::getNumGPUs();
-  int16_t deviceIdx = static_cast<int16_t>(rank % numGPUs);
-  return at::Device(at::DeviceType::CUDA, deviceIdx);
+  auto deviceIdx = static_cast<c10::DeviceIndex>(rank % numGPUs);
+  return c10::Device(c10::DeviceType::CUDA, deviceIdx);
 }
 #endif
 
@@ -799,12 +799,13 @@ void ProcessGroupUCC::runHealthCheck() {
   auto t = std::thread([&healthCheckData, this]() {
     std::list<c10::Device> devices{c10::kCPU};
 #ifdef USE_CUDA
+    c10::cuda::OptionalCUDAGuard gpuGuard;
     if (at::cuda::is_available()) {
       devices.emplace_front(getCUDADeviceForRank(rank_));
     }
 #endif
     for (auto device : devices) {
-      bool is_last_device = (device == c10::kCPU);
+      bool is_last_device = (device == devices.back());
       try {
         auto oob = std::make_shared<torch_ucc_oob_coll_info_t>();
         oob->rank = this->oob->rank;
@@ -814,7 +815,11 @@ void ProcessGroupUCC::runHealthCheck() {
         std::vector<ucp_ep_h> eps;
         ucc_team_h team = nullptr;
         uint32_t comm_id;
-
+#ifdef USE_CUDA
+        if (device.is_cuda()) {
+          gpuGuard.set_index(device.index());
+        }
+#endif
         auto comm = CommPG::get_comm(comm_id, device, oob, logger, true);
         comm->ucx_connect_eps(eps, oob);
         comm->ucx_disconnect_eps(eps, oob);
