@@ -246,7 +246,7 @@ bool ProcessGroupUCC::WorkUCC::isSuccess() const {
 }
 
 bool ProcessGroupUCC::WorkUCC::wait(std::chrono::milliseconds /* unused */) {
-  if (torch_ucc_config.enable_comms_logger && !logger_) {
+  if (torch_ucc_config.enable_comms_logger && logger_) {
     logger_->trace_generator->recordComms(
         "wait",
         (uintptr_t) this,
