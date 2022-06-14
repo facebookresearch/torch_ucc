@@ -62,6 +62,10 @@ if '--oss' in sys.argv:
 else:
   plugin_sources += ["src/torch_ucc_init.cpp"]
 
+if '--active-sets' in sys.argv:
+    sys.argv.remove('--active-sets')
+    plugin_compile_args.append("-DUSE_ACTIVE_SETS")
+
 with_cuda = os.environ.get("WITH_CUDA")
 if with_cuda is None or with_cuda == "no":
     print("CUDA support is disabled")
