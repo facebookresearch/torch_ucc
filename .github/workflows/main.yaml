@@ -84,7 +84,7 @@ jobs:
         export UCX_LOG_LEVEL=info
         export TORCH_UCC_ENABLE_HEALTH_CHECK=1
         export TORCH_SHOW_CPP_STACKTRACES=1
-        pip3 install expecttest hypothesis
+        pip3 install expecttest hypothesis xmlrunner unittest-xml-reporting
         cd test
         for np in `seq 4`
         do
