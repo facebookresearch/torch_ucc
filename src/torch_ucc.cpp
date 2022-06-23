@@ -1691,6 +1691,7 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::send(
       std::unique_ptr<WorkData>(data),
       tensor.device(),
       tensors,
+      tensors,
       "ucc:send");
 #else
   ucp_tag_t ucp_tag;
@@ -1749,6 +1750,7 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::recv(
       coll,
       std::unique_ptr<WorkData>(data),
       tensor.device(),
+      tensors,
       tensors,
       "ucc:recv");
 #else
