@@ -101,8 +101,9 @@ struct event_pool_t {
   std::mutex event_pool_mutex;
 };
 
-class CommPG;
+class Comm;
 
+// UCC does not support multiple CUDA devices per process.
 class ProcessGroupUCC : public ProcessGroup {
  private:
   void set_timeout(ucc_coll_args_t &args);
@@ -149,13 +150,14 @@ class ProcessGroupUCC : public ProcessGroup {
 
   class ProgressEntry {
     friend class ProcessGroupUCC;
-    friend class CommPG;
+    friend class Comm;
 
    public:
     ProgressEntry(
         CommBase* comm,
         ucc_coll_req_h request)
         : status_(UCC_INPROGRESS), comm_(comm), request_(request) {}
+    // Finalizes UCC status or exception of collective request.
     void finalize(std::exception_ptr eptr = nullptr);
     ucc_status_t status_;
     CommBase* comm_;
@@ -167,7 +169,7 @@ class ProcessGroupUCC : public ProcessGroup {
 
   class WorkUCC : public ProcessGroup::Work {
     friend class ProcessGroupUCC;
-    friend class CommPG;
+    friend class Comm;
 
    public:
     WorkUCC(
@@ -319,7 +321,7 @@ class ProcessGroupUCC : public ProcessGroup {
  protected:
   const std::chrono::duration<float> timeout_;
   std::shared_ptr<torch_ucc_oob_coll_info_t> oob;
-  std::shared_ptr<CommPG> comm = {nullptr};
+  std::shared_ptr<Comm> comm = {nullptr};
   uint32_t comm_id;
   std::vector<ucp_ep_h> eps;
   ucc_team_h team {nullptr};
@@ -331,7 +333,7 @@ class ProcessGroupUCC : public ProcessGroup {
   c10::intrusive_ptr<ProcessGroupUCCLogger> logger;
 };
 
-class CommPG {
+class Comm {
   c10::intrusive_ptr<ProcessGroupUCCLogger> logger;
   std::shared_ptr<torch_ucc_oob_coll_info_t> oob;
   CommUCX ucx_comm;
@@ -347,16 +349,18 @@ class CommPG {
 
  public:
   c10::DeviceIndex cuda_device_index;
-  CommPG(const c10::intrusive_ptr<ProcessGroupUCCLogger>& logger,
+  Comm(const c10::intrusive_ptr<ProcessGroupUCCLogger>& logger,
       std::shared_ptr<torch_ucc_oob_coll_info_t> oob,
       c10::Device dev, bool is_health_check);
 
-  ~CommPG();
+  ~Comm();
 
+  // Connects UCX end points.
   void ucx_connect_eps(
       std::vector<ucp_ep_h>& eps,
       std::shared_ptr<torch_ucc_oob_coll_info_t> oob);
 
+  // Disconnects UCX end points.
   void ucx_disconnect_eps(
       std::vector<ucp_ep_h>& eps,
       std::shared_ptr<torch_ucc_oob_coll_info_t> oob);
@@ -387,7 +391,7 @@ class CommPG {
       ucc_coll_args_t& coll,
       ucc_team_h team);
 
-  static std::shared_ptr<CommPG> get_comm(
+  static std::shared_ptr<Comm> get_comm(
       uint32_t& id,
       c10::Device dev,
       std::shared_ptr<torch_ucc_oob_coll_info_t> oob,
