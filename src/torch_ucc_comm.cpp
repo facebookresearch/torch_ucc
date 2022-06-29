@@ -13,6 +13,12 @@
 
 namespace c10d {
 
+namespace {
+constexpr char kTeamRank[] = "teamr";
+constexpr char kAllGatherDone[] = "ag_done";
+constexpr char kAllGatherFree[] = "ag_free";
+} // namespace
+
 CommUCX::CommUCX(
     int comm_size,
     const c10::intrusive_ptr<ProcessGroupUCCLogger>& logger)
@@ -88,13 +94,13 @@ ucc_status_t oob_allgather(
     size_t msglen,
     void* coll_info,
     void** req) {
-  torch_ucc_oob_coll_info_t* info =
-      reinterpret_cast<torch_ucc_oob_coll_info_t*>(coll_info);
+  auto* info = reinterpret_cast<torch_ucc_oob_coll_info_t*>(coll_info);
+  TORCH_CHECK(info != nullptr);
   std::vector<uint8_t> val = std::vector<uint8_t>(
       reinterpret_cast<uint8_t*>(sbuf),
       reinterpret_cast<uint8_t*>(sbuf) + msglen);
   try {
-    info->store->set(info->getKey("teamr" + std::to_string(info->rank)), val);
+    info->store->set(info->getKey(kTeamRank + std::to_string(info->rank)), val);
     info->rbuf = rbuf;
     info->msglen = msglen;
     *req = coll_info;
@@ -107,18 +113,18 @@ ucc_status_t oob_allgather(
 }
 
 ucc_status_t oob_allgather_test(void* req) {
-  torch_ucc_oob_coll_info_t* info =
-      reinterpret_cast<torch_ucc_oob_coll_info_t*>(req);
+  auto* info = reinterpret_cast<torch_ucc_oob_coll_info_t*>(req);
+  TORCH_CHECK(info != nullptr);
 
   try {
     for (int r = 0; r < info->size; r++) {
-      if (!info->store->check({info->getKey("teamr" + std::to_string(r))})) {
+      if (!info->store->check({info->getKey(kTeamRank + std::to_string(r))})) {
         return UCC_INPROGRESS;
       }
     }
     for (int r = 0; r < info->size; r++) {
       std::vector<uint8_t> data =
-          info->store->get(info->getKey("teamr" + std::to_string(r)));
+          info->store->get(info->getKey(kTeamRank + std::to_string(r)));
       memcpy(
           (void*)((ptrdiff_t)info->rbuf + info->msglen * r),
           data.data(),
@@ -133,23 +139,27 @@ ucc_status_t oob_allgather_test(void* req) {
 }
 
 ucc_status_t oob_allgather_free(void* req) {
-  torch_ucc_oob_coll_info_t* info =
-      reinterpret_cast<torch_ucc_oob_coll_info_t*>(req);
+  auto* info = reinterpret_cast<torch_ucc_oob_coll_info_t*>(req);
+  TORCH_CHECK(info != nullptr);
   try {
-    int num_done = info->store->add({info->getKey("ag_done")}, 1);
+    int num_done = info->store->add({info->getKey(kAllGatherDone)}, 1);
     if (num_done == info->size) {
-      info->store->deleteKey(info->getKey("ag_done"));
-      for (int r = 0; r < info->size; r++) {
-        info->store->deleteKey(info->getKey("teamr" + std::to_string(r)));
+      info->store->deleteKey(info->getKey(kAllGatherDone));
+      // Note: to avoid race condition, it's important to remove all keys in
+      // oob_allgather_free first and only after that signal completion to
+      // other ranks
+      for (const auto r : c10::irange(info->size)) {
+        info->store->deleteKey(info->getKey(kTeamRank + std::to_string(r)));
       }
-      for (int r = 0; r < info->size; r++) {
-        info->store->add({info->getKey("ag_free" + std::to_string(r))}, 1);
+      for (const auto r : c10::irange(info->size)) {
+        info->store->add({info->getKey(kAllGatherFree + std::to_string(r))}, 1);
       }
     } else {
-      info->store->wait({info->getKey("ag_free" + std::to_string(info->rank))});
+      info->store->wait(
+          {info->getKey(kAllGatherFree + std::to_string(info->rank))});
     }
     info->store->deleteKey(
-        info->getKey("ag_free" + std::to_string(info->rank)));
+        info->getKey(kAllGatherFree + std::to_string(info->rank)));
   } catch (std::exception& ex) {
     LOG(ERROR) << "(oob_allgather) Caught exception in Store Operation .. "
                << "[" << ex.what() << "]";
