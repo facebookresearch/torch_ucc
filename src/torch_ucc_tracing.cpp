@@ -104,11 +104,11 @@ void CommTraceLogger::recordComms(
     const int world_size,
     const std::vector<at::Tensor>& inputTensors,
     const std::vector<at::Tensor>& outputTensors) {
-  auto inSize = (inputTensors.size() > 0) ? inputTensors[0].numel() : 0;
-  auto outSize = (outputTensors.size() > 0) ? outputTensors[0].numel() : 0;
+  auto inSize = (!inputTensors.empty()) ? inputTensors[0].numel() : 0;
+  auto outSize = (!outputTensors.empty()) ? outputTensors[0].numel() : 0;
   auto dtype =
-      (outputTensors.size() > 0) ? outputTensors[0].scalar_type() : at::kByte;
-  auto devType = (outputTensors.size() > 0) ? outputTensors[0].device().type()
+      (!outputTensors.empty()) ? outputTensors[0].scalar_type() : at::kByte;
+  auto devType = (!outputTensors.empty()) ? outputTensors[0].device().type()
                                             : c10::DeviceType::CPU;
   auto now = std::chrono::system_clock::now();
   static auto startTS = now;
@@ -153,7 +153,7 @@ void CommTraceLogger::recordComms(
     // append root rank if applicable, e.g., broadcast, gather, scatter
     cur_trace_ = c10::str(cur_trace_, ",\n\t\t\"root\": ", curRoot_);
   }
-  if (curInSplitSizes_.size() > 0 || curOutSplitSizes_.size() > 0) {
+  if (!curInSplitSizes_.empty() || !curOutSplitSizes_.empty()) {
     // append input and output splits if applicable, e.g., ALLTOALL_BASE
     cur_trace_ = c10::str(
         cur_trace_,
