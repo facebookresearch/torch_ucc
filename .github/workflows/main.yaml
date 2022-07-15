@@ -18,7 +18,7 @@ jobs:
         apt-get update
         apt-get install -y --no-install-recommends build-essential git cmake libtool-bin wget autoconf automake clang
         conda uninstall -y pytorch torchvision
-        pip3 install --pre torch -f https://download.pytorch.org/whl/nightly/cpu/torch_nightly.html
+        pip3 install --pre torch -f https://download.pytorch.org/whl/nightly/cu113/torch_nightly.html
     - name: Get UCX
       run: |
         git clone ${OPENUCX_LINK} /tmp/ucx
@@ -126,3 +126,14 @@ jobs:
         echo "PARAM-Comms Pt2pt w/ UCC"
         export TORCH_UCC_TEST_SIZE=2
         /bin/bash ./test/start_test.sh /tmp/param/train/comms/pt/comms.py --backend ucc --device cpu --b 4 --e 4M --c 1 --pt2pt one2one --src-ranks 0 --dst-ranks 1
+    - name: PyTorch distributed tests
+      run: |
+        set -e
+        git_version=$(python -c 'import torch; print(torch.version.git_version)')
+        export TORCH_UCC_LIBRARY_PATH=$(python -c "import inspect; import torch; import torch_ucc; print(inspect.getfile(torch_ucc))")
+        python -c "import torch.distributed as dist; assert dist.is_nccl_available()"
+        pip3 install expecttest
+        git clone https://github.com/pytorch/pytorch.git
+        cd pytorch
+        git checkout ${git_version}
+        python test/run_test.py --verbose --nccl -i distributed/test_distributed_spawn
