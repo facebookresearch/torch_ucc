@@ -1,3 +1,10 @@
+# This repository is deprecated
+
+Torch-UCC plugin has been merged into PyTorch as one of the native ProcessGroup implementations (please refer to https://github.com/pytorch/pytorch/pull/79918), which will be the single source of Torch-UCC (i.e., ProcessGroupUCC). Please check out PyTorch repository (https://github.com/pytorch/pytorch). Some code points for reference:
+* ProcessGroupUCC: https://github.com/pytorch/pytorch/blob/master/torch/csrc/distributed/c10d/ProcessGroupUCC.cpp, https://github.com/pytorch/pytorch/blob/master/torch/csrc/distributed/c10d/ProcessGroupUCC.hpp)
+* UCC Utiliies: https://github.com/pytorch/pytorch/blob/master/torch/csrc/distributed/c10d/UCCUtils.cpp, https://github.com/pytorch/pytorch/blob/master/torch/csrc/distributed/c10d/UCCUtils.hpp
+* UCC Comms Tracing: https://github.com/pytorch/pytorch/blob/master/torch/csrc/distributed/c10d/UCCTracing.cpp, https://github.com/pytorch/pytorch/blob/master/torch/csrc/distributed/c10d/UCCTracing.hpp
+
 # PyTorch plugin for UCC
 
 This repo implements PyTorch Process Group API for [UCC](https://www.ucfconsortium.org/projects/ucc/) as a third-party plugin.
