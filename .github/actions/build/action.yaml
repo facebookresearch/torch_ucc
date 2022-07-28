@@ -1,0 +1,43 @@
+name: build
+
+description: 'Build UCX and UCC, and then install Torch_UCC with UCX and UCC'
+inputs:
+  ucx:
+    description: 'UCX git repository'
+    required: true
+    default: 'https://github.com/openucx/ucx.git'
+  ucc:
+    description: 'UCC git repository'
+    required: true
+    default: 'https://github.com/openucx/ucc.git'
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install packages
+      shell: bash
+      run: |
+        apt-get update
+        apt-get install -y --no-install-recommends build-essential git cmake libtool-bin wget autoconf automake clang
+        conda uninstall -y pytorch torchvision
+        pip3 install --pre torch -f https://download.pytorch.org/whl/nightly/cpu/torch_nightly.html
+    - name: Get UCX
+      shell: bash
+      run: |
+        git clone ${{ inputs.ucx }} /tmp/ucx
+        cd /tmp/ucx
+        ./autogen.sh
+        CC=clang CXX=clang++ ./contrib/configure-release-mt --without-java --disable-numa --prefix=/opt/ucx
+        make -j install
+    - name: Get UCC
+      shell: bash
+      run: |
+        git clone ${{ inputs.ucc }} /tmp/ucc
+        cd /tmp/ucc
+        ./autogen.sh
+        CC=clang CXX=clang++ ./configure --with-ucx=/opt/ucx --prefix=/opt/ucc
+        make -j install
+    - name: Build TorchUCC with UCX and UCC
+      shell: bash
+      run: |
+        CC=clang CXX=clang++ UCX_HOME=/opt/ucx/ UCC_HOME=/opt/ucc/ WITH_CUDA=no python setup.py install
