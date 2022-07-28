@@ -13,7 +13,9 @@
 #include <c10d/ProcessGroup.hpp>
 #include <c10d/Store.hpp>
 #include <ucc/api/ucc.h>
+#ifndef USE_ACTIVE_SETS
 #include <ucp/api/ucp.h>
+#endif
 
 #define TORCH_UCX_COMM_BITS 15
 #define TORCH_UCX_RANK_BITS 16
@@ -61,6 +63,7 @@ namespace c10d {
     }                                     \
   } while (0)
 
+#ifndef USE_ACTIVE_SETS
 // Macro to throw on a non-successful UCX return value.
 #define TORCH_UCX_CHECK(_cmd, _error_msg) \
   do {                                    \
@@ -83,6 +86,7 @@ namespace c10d {
       TORCH_CHECK(false, err);            \
     }                                     \
   } while (0)
+#endif
 
 // Macros to print logs with unified format
 #define TORCH_UCC_LOG_ERROR(_phase, _msg) \
@@ -157,6 +161,7 @@ class CommBase {
   c10::intrusive_ptr<ProcessGroupUCCLogger> logger;
 };
 
+#ifndef USE_ACTIVE_SETS
 class CommUCX : public CommBase {
  public:
   ucp_context_h context{nullptr};
@@ -170,6 +175,7 @@ class CommUCX : public CommBase {
       const c10::intrusive_ptr<ProcessGroupUCCLogger>& logger);
   ~CommUCX();
 };
+#endif
 
 class CommUCC : public CommBase {
  public:

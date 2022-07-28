@@ -323,7 +323,9 @@ class ProcessGroupUCC : public ProcessGroup {
   std::shared_ptr<torch_ucc_oob_coll_info_t> oob;
   std::shared_ptr<Comm> comm = {nullptr};
   uint32_t comm_id;
+#ifndef USE_ACTIVE_SETS
   std::vector<ucp_ep_h> eps;
+#endif
   ucc_team_h team {nullptr};
   ucc_ee_h cuda_ee {nullptr};
 #ifdef USE_CUDA
@@ -336,7 +338,9 @@ class ProcessGroupUCC : public ProcessGroup {
 class Comm {
   c10::intrusive_ptr<ProcessGroupUCCLogger> logger;
   std::shared_ptr<torch_ucc_oob_coll_info_t> oob;
+#ifndef USE_ACTIVE_SETS
   CommUCX ucx_comm;
+#endif
   CommUCC ucc_comm;
   std::mutex mutex;
   std::thread progress_thread;
@@ -355,6 +359,7 @@ class Comm {
 
   ~Comm();
 
+#ifndef USE_ACTIVE_SETS
   // Connects UCX end points.
   void ucx_connect_eps(
       std::vector<ucp_ep_h>& eps,
@@ -364,6 +369,7 @@ class Comm {
   void ucx_disconnect_eps(
       std::vector<ucp_ep_h>& eps,
       std::shared_ptr<torch_ucc_oob_coll_info_t> oob);
+#endif
 
   void ucc_create_team(
       ucc_team_h& team,
@@ -371,10 +377,12 @@ class Comm {
 
   void ucc_destroy_team(ucc_team_h& team);
 
+#ifndef USE_ACTIVE_SETS
   c10::intrusive_ptr<ProcessGroup::Work> enqueue_p2p(
       OpType opType,
       ucc_coll_req_h request,
       const char* prof_title);
+#endif
 
 #ifdef USE_CUDA
   void enqueue_cuda_collective(
@@ -400,6 +408,9 @@ class Comm {
 
   void progress_loop();
 
+#ifndef USE_ACTIVE_SETS
+  // Only used internally
+  // Unused when USE_ACTIVE_SETS is ON, thus safe to disable
   ucc_coll_req_h send_nb(
       ucp_ep_h ep,
       void* data,
@@ -413,6 +424,7 @@ class Comm {
       size_t size,
       ucp_tag_t ucp_tag,
       ucp_tag_t ucp_tag_mask);
+#endif
 };
 
 } // namespace c10d
