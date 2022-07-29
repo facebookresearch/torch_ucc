@@ -8,35 +8,18 @@ env:
   PARAM_LINK: https://github.com/facebookresearch/param
 
 jobs:
-  tests:
+  torch-ucc-tests:
     runs-on: ubuntu-latest
     container:
       image: pytorch/pytorch:latest
     steps:
-    - name: Install packages
-      run: |
-        apt-get update
-        apt-get install -y --no-install-recommends build-essential git cmake libtool-bin wget autoconf automake clang
-        conda uninstall -y pytorch torchvision
-        pip3 install --pre torch -f https://download.pytorch.org/whl/nightly/cpu/torch_nightly.html
-    - name: Get UCX
-      run: |
-        git clone ${OPENUCX_LINK} /tmp/ucx
-        cd /tmp/ucx
-        ./autogen.sh
-        CC=clang CXX=clang++ ./contrib/configure-release-mt --without-java --disable-numa --prefix=/opt/ucx
-        make -j install
-    - name: Get UCC
-      run: |
-        git clone ${UCC_LINK} /tmp/ucc
-        cd /tmp/ucc
-        ./autogen.sh
-        CC=clang CXX=clang++ ./configure --with-ucx=/opt/ucx --prefix=/opt/ucc
-        make -j install
-    - uses: actions/checkout@v1
-    - name: Build with UCX and UCC
-      run: |
-        CC=clang CXX=clang++ UCX_HOME=/opt/ucx/ UCC_HOME=/opt/ucc/ WITH_CUDA=no python setup.py install
+    - name: Checkout Action
+      uses: actions/checkout@v1
+    - name: Build TorchUCC
+      uses: ./.github/actions/build
+      with:
+        ucx: ${OPENUCX_LINK}
+        ucc: ${UCC_LINK}
     - name: Tests
       run: |
         export LD_LIBRARY_PATH=/opt/ucx/lib:/opt/ucc/lib:$LD_LIBRARY_PATH
@@ -77,6 +60,18 @@ jobs:
         echo "UCC multiple comms test shared comm"
         TORCH_UCC_SHARED_COMM=1 /bin/bash ./test/start_test.sh ./test/torch_multiple_comms_test.py
 
+  pytorch-unit-tests:
+    runs-on: ubuntu-latest
+    container:
+      image: pytorch/pytorch:latest
+    steps:
+    - name: Checkout Action
+      uses: actions/checkout@v1
+    - name: Build TorchUCC
+      uses: ./.github/actions/build
+      with:
+        ucx: ${OPENUCX_LINK}
+        ucc: ${UCC_LINK}
     - name: PyTorch Unit Tests
       run: |
         export LD_LIBRARY_PATH=/opt/ucx/lib:/opt/ucc/lib:$LD_LIBRARY_PATH
@@ -93,6 +88,18 @@ jobs:
           python torch_tests.py --subprocess
         done
 
+  param-comm-tests:
+    runs-on: ubuntu-latest
+    container:
+      image: pytorch/pytorch:latest
+    steps:
+    - name: Checkout Action
+      uses: actions/checkout@v1
+    - name: Build TorchUCC
+      uses: ./.github/actions/build
+      with:
+        ucx: ${OPENUCX_LINK}
+        ucc: ${UCC_LINK}
     - name: Test PARAM
       run: |
         git clone ${PARAM_LINK} /tmp/param
