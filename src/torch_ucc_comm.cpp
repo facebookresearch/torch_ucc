@@ -19,6 +19,7 @@ constexpr char kAllGatherDone[] = "ag_done";
 constexpr char kAllGatherFree[] = "ag_free";
 } // namespace
 
+#ifndef USE_ACTIVE_SETS
 CommUCX::CommUCX(
     int comm_size,
     const c10::intrusive_ptr<ProcessGroupUCCLogger>& logger)
@@ -87,6 +88,7 @@ CommUCX::~CommUCX() {
   worker = nullptr;
   context = nullptr;
 }
+#endif
 
 ucc_status_t oob_allgather(
     void* sbuf,

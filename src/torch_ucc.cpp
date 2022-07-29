@@ -19,6 +19,7 @@ namespace c10d {
 namespace {
 constexpr int64_t kBusyWaitMillis = 10;
 
+#ifndef USE_ACTIVE_SETS
 const std::map<c10::DeviceType, ucs_memory_type_t> ucs_mtype_map = {
     {c10::kCPU, UCS_MEMORY_TYPE_HOST},
     {c10::kCUDA, UCS_MEMORY_TYPE_CUDA},
@@ -30,6 +31,7 @@ ucs_memory_type_t to_ucs_memType(c10::DeviceType _c10_type) {
   else
     return UCS_MEMORY_TYPE_UNKNOWN;
 }
+#endif
 
 const std::map<c10::DeviceType, ucc_memory_type_t> ucc_mtype_map = {
     {c10::kCPU, UCC_MEMORY_TYPE_HOST},
@@ -330,7 +332,9 @@ Comm::Comm(
     bool is_health_check)
     : logger(logger_),
       oob(oob_),
+#ifndef USE_ACTIVE_SETS
       ucx_comm(oob->size, logger),
+#endif
       ucc_comm(oob, logger),
       finalize_phase(is_health_check ? TORCH_UCC_HEALTH_CHECK : TORCH_UCC_FINALIZE),
       cuda_device_index(TORCH_UCC_DEVICE_NOT_SET) {
@@ -422,6 +426,8 @@ std::shared_ptr<Comm> Comm::get_comm(
   }
 }
 
+#ifndef USE_ACTIVE_SETS
+// Only called internally in initComm and runHealthCheck when USE_ACTIVE_SETS is off.
 void Comm::ucx_connect_eps(
     std::vector<ucp_ep_h>& eps,
     std::shared_ptr<torch_ucc_oob_coll_info_t> oob) {
@@ -450,6 +456,7 @@ void Comm::ucx_connect_eps(
   }
 }
 
+// Only called internally in ~ProcessGroupUCC and runHealthCheck when USE_ACTIVE_SETS is off.
 void Comm::ucx_disconnect_eps(
     std::vector<ucp_ep_h>& eps,
     std::shared_ptr<torch_ucc_oob_coll_info_t> oob) {
@@ -487,6 +494,7 @@ void Comm::ucx_disconnect_eps(
   }
 }
 
+// Only used internally by send when USE_ACTIVE_SETS is off.
 ucc_coll_req_h Comm::send_nb(
     ucp_ep_h ep,
     void* data,
@@ -513,6 +521,7 @@ ucc_coll_req_h Comm::send_nb(
   return reinterpret_cast<ucc_coll_req_h>(st);
 }
 
+// Only used internally by recv and recvAnysource when USE_ACTIVE_SETS is off.
 ucc_coll_req_h Comm::recv_nb(
     void* data,
     ucs_memory_type_t mtype,
@@ -542,6 +551,7 @@ ucc_coll_req_h Comm::recv_nb(
   }
   return reinterpret_cast<ucc_coll_req_h>(st);
 }
+#endif // end of ifndef USE_ACTIVE_SETS
 
 void Comm::ucc_create_team(
     ucc_team_h& team,
@@ -586,6 +596,7 @@ void Comm::ucc_destroy_team(ucc_team_h& team) {
   lock.unlock();
 }
 
+#ifndef USE_ACTIVE_SETS
 c10::intrusive_ptr<ProcessGroup::Work> Comm::enqueue_p2p(
     OpType opType,
     ucc_coll_req_h request,
@@ -613,6 +624,7 @@ c10::intrusive_ptr<ProcessGroup::Work> Comm::enqueue_p2p(
   queue_produce_cv.notify_one();
   return work;
 }
+#endif
 
 void Comm::enqueue_collective(
     std::unique_ptr<ProcessGroupUCC::WorkData> data,
@@ -692,7 +704,9 @@ void Comm::progress_loop() {
     try {
       while (work->request_->status > 0) {
         ucc_comm.progress();
+#ifndef USE_ACTIVE_SETS
         ucx_comm.progress();
+#endif
       }
       if (work->request_->status < 0) {
         eptr = std::make_exception_ptr(
@@ -768,15 +782,17 @@ ProcessGroupUCC::~ProcessGroupUCC() {
     comm->ucc_destroy_team(team);
     TORCH_UCC_LOG_INFO(
         TORCH_UCC_FINALIZE, "Successfully destroyed UCC library");
+#ifndef USE_ACTIVE_SETS
     comm->ucx_disconnect_eps(eps, oob);
     TORCH_UCC_LOG_INFO(
         TORCH_UCC_FINALIZE, "Successfully destroyed UCX library");
+#endif
     try {
       if (cuda_ee) {
         ucc_ee_destroy(cuda_ee);
       }
-      if ((size_t)oob->store->add(oob->getKey("ucc_pg_closed"), 1) ==
-          eps.size()) {
+      if ((size_t) oob->store->add(oob->getKey("ucc_pg_closed"), 1) ==
+          this->getSize()) {
         std::vector<uint8_t> val = {1};
         oob->store->set(oob->getKey("ucc_pg_finished"), val);
       } else {
@@ -836,7 +852,6 @@ void ProcessGroupUCC::runHealthCheck() {
         oob->size = this->oob->size;
         oob->store = this->oob->store;
 
-        std::vector<ucp_ep_h> eps;
         ucc_team_h team = nullptr;
         uint32_t comm_id;
 #ifdef USE_CUDA
@@ -845,6 +860,15 @@ void ProcessGroupUCC::runHealthCheck() {
         }
 #endif
         auto comm = Comm::get_comm(comm_id, device, oob, logger, true);
+#ifdef USE_ACTIVE_SETS
+        TORCH_UCC_LOG_INFO(
+            TORCH_UCC_HEALTH_CHECK,
+            c10::str(
+                "Skip UCX health check in UCC when USE_ACTIVE_SETS is set.")
+        );
+        healthCheckData.ucxHealthCheckSuccess = true;
+#else
+        std::vector<ucp_ep_h> eps;
         comm->ucx_connect_eps(eps, oob);
         comm->ucx_disconnect_eps(eps, oob);
         TORCH_UCC_LOG_INFO(
@@ -858,7 +882,7 @@ void ProcessGroupUCC::runHealthCheck() {
           std::lock_guard<std::mutex> lk(healthCheckData.healthCheckMutex);
           healthCheckData.ucxHealthCheckSuccess = true;
         }
-
+#endif
         comm->ucc_create_team(team, oob);
         comm->ucc_destroy_team(team);
         TORCH_UCC_LOG_INFO(
@@ -906,10 +930,12 @@ void ProcessGroupUCC::runHealthCheck() {
     std::rethrow_exception(healthCheckData.healthCheckException);
   }
   // If there is no exception, the likely culprit is a timeout/hang
+#ifndef USE_ACTIVE_SETS
   TORCH_CHECK(
       healthCheckData.ucxHealthCheckSuccess,
       "ProcessGroupUCC: Health check failure: Failed to initialize UCX on rank ",
       rank_);
+#endif
   TORCH_CHECK(
       healthCheckData.uccHealthCheckSuccess,
       "ProcessGroupUCC: Health check failure: Failed to initialize UCC on rank ",
@@ -1802,6 +1828,9 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::recvAnysource(
   auto& tensor = tensors[0];
   initComm(tensor.device());
 
+#ifdef USE_ACTIVE_SETS
+  TORCH_CHECK(false, "recvAnysource is not supported in UCC when USE_ACTIVE_SETS is set");
+#else
   ucp_tag_t ucp_tag, ucp_tag_mask;
   TORCH_UCX_MAKE_RECV_TAG(
       ucp_tag, ucp_tag_mask, tag, TORCH_UCX_ANY_SOURCE, comm_id);
@@ -1823,6 +1852,7 @@ c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupUCC::recvAnysource(
       tensors,
       tensors);
   return work;
+#endif
 }
 
 c10::intrusive_ptr<ProcessGroup> ProcessGroupUCC::createProcessGroupUCC(
@@ -1841,8 +1871,10 @@ void ProcessGroupUCC::initComm(c10::Device dev) {
     }
 #endif
     comm = Comm::get_comm(comm_id, dev, oob, logger);
+#ifndef USE_ACTIVE_SETS
     comm->ucx_connect_eps(eps, oob);
     TORCH_UCC_LOG_INFO(TORCH_UCC_INIT, "Successfully initialized UCX library");
+#endif
     comm->ucc_create_team(team, oob);
     TORCH_UCC_LOG_INFO(TORCH_UCC_INIT, "Successfully initialized UCC library");
     logger->setPhase(TORCH_UCC_READY);
