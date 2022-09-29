@@ -131,7 +131,7 @@ void CommTraceLogger::recordComms(
       ",\n\t\t\"req\": ",
       workReq,
       ",\n\t\t\"seqnum\": ",
-      seqnum++,
+      seqnum,
       ",\n\t\t\"world_size\": ",
       world_size);
 
@@ -168,6 +168,8 @@ void CommTraceLogger::recordComms(
 
   // record the trace to kineto trace if applicable
   RECORD_PARAM_COMMS(
+      static_cast<int64_t>(seqnum), // seq
+      0, // process group ptr
       rank,
       commName.c_str(),
       inSize,
@@ -175,6 +177,8 @@ void CommTraceLogger::recordComms(
       dtype,
       curInSplitSizes_,
       curOutSplitSizes_);
+
+  ++seqnum;
 
   // reset optional field
   curRoot_ = -1;
