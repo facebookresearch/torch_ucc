@@ -10,8 +10,8 @@
 
 #pragma once
 
-#include <c10d/ProcessGroup.hpp>
-#include <c10d/Store.hpp>
+#include <torch/csrc/distributed/c10d/ProcessGroup.hpp>
+#include <torch/csrc/distributed/c10d/Store.hpp>
 #include <ucc/api/ucc.h>
 #ifndef USE_ACTIVE_SETS
 #include <ucp/api/ucp.h>

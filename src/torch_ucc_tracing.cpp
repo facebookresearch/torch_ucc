@@ -9,7 +9,7 @@
 #include "torch_ucc_tracing.hpp"
 #include "torch_ucc_comm.hpp"
 
-#include <c10d/ParamCommsUtils.hpp>
+#include <torch/csrc/distributed/c10d/ParamCommsUtils.hpp>
 
 #include <sys/stat.h>
 #include <cstdlib>
