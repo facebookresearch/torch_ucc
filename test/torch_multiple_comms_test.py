@@ -1,3 +1,5 @@
+# (c) Meta Platforms, Inc. and affiliates. Confidential and proprietary.
+
 from torch_ucc_test_setup import *
 
 # create 2 UCC PGs

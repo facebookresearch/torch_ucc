@@ -1,3 +1,7 @@
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
+ */
+
 #include <torch/python.h>
 #include <pybind11/chrono.h>
 

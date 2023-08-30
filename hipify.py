@@ -1,3 +1,5 @@
+# Meta Platforms, Inc. and affiliates Copyright
+
 import os
 
 from torch.utils.hipify import hipify_python
